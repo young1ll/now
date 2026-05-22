@@ -1,0 +1,75 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  background: #f7f7f8;
+  color: #111;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
+}
+
+.markdown p {
+  margin: 0.5em 0;
+}
+.markdown ul {
+  list-style: disc;
+  padding-left: 1.25em;
+  margin: 0.5em 0;
+}
+.markdown ol {
+  list-style: decimal;
+  padding-left: 1.25em;
+  margin: 0.5em 0;
+}
+.markdown h1,
+.markdown h2,
+.markdown h3 {
+  font-weight: 600;
+  margin-top: 0.75em;
+  margin-bottom: 0.25em;
+}
+.markdown code {
+  background: #f0f0f3;
+  padding: 0 0.25em;
+  border-radius: 3px;
+}
+
+/* 인쇄(PDF 저장) 전용 */
+@media print {
+  @page {
+    size: A4;
+    margin: 18mm 16mm 18mm 16mm;
+  }
+  html,
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+  .report-card {
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+  .page-break {
+    break-before: page;
+  }
+  a {
+    color: #000;
+    text-decoration: none;
+  }
+}
+
+.print-only {
+  display: none;
+}
