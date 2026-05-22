@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "smoke:law": "tsx scripts/smoke-law.ts"
+    "smoke:law": "tsx scripts/smoke-law.ts",
+    "smoke:claude": "tsx scripts/smoke-claude.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.40.0",

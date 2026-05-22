@@ -40,17 +40,21 @@ CLAUDE_MODEL=claude-sonnet-4-6
 npm install
 ```
 
-### 4. (선택) 법령 API 단독 확인
+### 4. (선택) API 단독 확인
 
-먼저 OC 키가 살아 있고 네트워크 접근이 되는지 단독 검증:
+먼저 두 외부 API가 살아 있는지 단독 검증:
 
 ```bash
+# 국가법령정보센터
 npm run smoke:law
-# 또는 키워드 지정
 npm run smoke:law "상속세 및 증여세법"
+
+# Claude API
+npm run smoke:claude
+npm run smoke:claude "양도소득세 장기보유특별공제"
 ```
 
-성공하면 검색된 법령명·MST·조문 개수가 출력됩니다.
+각각 성공하면 검색 결과와 추출 키워드가 출력됩니다.
 
 ### 5. 개발 서버 실행
 
