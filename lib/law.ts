@@ -72,13 +72,20 @@ export async function getLawBody(id: string): Promise<LawBody> {
   const articles: LawArticle[] = rawArticles
     .filter(Boolean)
     .map((a: any) => {
-      const number = String(a["조문번호"] ? `제${a["조문번호"]}조` : a.number ?? "").trim();
-      const title = a["조문제목"] ? `(${a["조문제목"]})` : "";
-      const body = collectText(a).trim();
+      const rawNo = a["조문번호"] ?? a.number ?? "";
+      const numText = String(rawNo).replace(/^0+/, "") || String(rawNo);
+      const subNo = a["조문가지번호"] ? `의${String(a["조문가지번호"]).replace(/^0+/, "")}` : "";
+      const numberLabel = numText ? `제${numText}${subNo}조` : "";
+      const title = a["조문제목"] ? ` (${a["조문제목"]})` : "";
+      // 본문은 조문내용 + 항/호를 우선 추출, 없으면 전체 텍스트 수집
+      const main = String(a["조문내용"] ?? "").trim();
+      const paragraphs = collectText(a["항"] ?? "").trim();
+      const composed = [main, paragraphs].filter(Boolean).join("\n");
+      const body = composed || collectText(a).trim();
       return {
-        number: number || title || "",
+        number: numberLabel + title,
         paragraph: undefined,
-        body: body,
+        body,
       };
     })
     .filter((a) => a.body.length > 0);
