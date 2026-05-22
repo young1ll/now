@@ -6,7 +6,12 @@ const DEFAULT_MODEL = "claude-sonnet-4-6";
 function client(): Anthropic {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다.");
-  return new Anthropic({ apiKey });
+  // globalThis.fetch(Node 22 네이티브)를 명시 주입.
+  // 테스트에서 fetch 패치만으로 SDK 호출까지 가로챌 수 있게 함.
+  return new Anthropic({
+    apiKey,
+    fetch: globalThis.fetch as any,
+  });
 }
 
 function modelId(): string {

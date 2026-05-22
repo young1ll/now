@@ -42,3 +42,4 @@ yarn-error.log*
 
 # Local artifacts
 /reports
+/sample-report.html

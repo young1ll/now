@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "next lint",
     "smoke:law": "tsx scripts/smoke-law.ts",
-    "smoke:claude": "tsx scripts/smoke-claude.ts"
+    "smoke:claude": "tsx scripts/smoke-claude.ts",
+    "test": "node --import tsx --test tests/integration.test.ts",
+    "demo:render": "tsx scripts/render-sample.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.40.0",

@@ -40,21 +40,25 @@ CLAUDE_MODEL=claude-sonnet-4-6
 npm install
 ```
 
-### 4. (선택) API 단독 확인
-
-먼저 두 외부 API가 살아 있는지 단독 검증:
+### 4. (선택) 사전 검증
 
 ```bash
-# 국가법령정보센터
+# 모킹된 통합 테스트 (네트워크 불필요, 즉시 실행)
+npm test
+
+# 보고서 레이아웃 미리보기 (외부 API 호출 없음)
+npm run demo:render
+# → ./sample-report.html 생성. 브라우저로 열어 Ctrl/Cmd+P 미리보기
+
+# 실제 외부 API 단독 검증 (네트워크 + 키 필요)
 npm run smoke:law
 npm run smoke:law "상속세 및 증여세법"
-
-# Claude API
 npm run smoke:claude
 npm run smoke:claude "양도소득세 장기보유특별공제"
 ```
 
-각각 성공하면 검색 결과와 추출 키워드가 출력됩니다.
+`npm test`는 외부 호출을 모킹하므로 API 키 없이도 파이프라인을 검증합니다.
+`npm run smoke:*`는 실제 키와 네트워크를 사용해 응답 형식 차이를 미리 잡아냅니다.
 
 ### 5. 개발 서버 실행
 
@@ -88,7 +92,12 @@ now/
 │  ├─ claude.ts             # Claude (키워드 추출 + 답변 합성)
 │  └─ types.ts
 ├─ scripts/
-│  └─ smoke-law.ts          # 법령 API 단독 검증
+│  ├─ smoke-law.ts          # 법령 API 단독 검증 (실 호출)
+│  ├─ smoke-claude.ts       # Claude API 단독 검증 (실 호출)
+│  └─ render-sample.ts      # 샘플 보고서 HTML 생성 (인쇄 레이아웃 미리보기)
+├─ tests/
+│  ├─ integration.test.ts   # 외부 API 모킹 통합 테스트 (npm test)
+│  └─ fixtures/
 └─ docs/기획서.md
 ```
 
