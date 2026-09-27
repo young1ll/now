@@ -263,7 +263,7 @@ function graphOut(g: Graph) {
 export const TOOL_MAP = Object.fromEntries(TOOLS.map((t) => [t.name, t]));
 
 export function callTool(db: DB, actor: Actor, name: string, args: unknown): unknown {
-  const tool = TOOL_MAP[name];
+  const tool = Object.hasOwn(TOOL_MAP, name) ? TOOL_MAP[name] : undefined;
   if (!tool) throw new ToolError(`알 수 없는 도구: ${name}`);
   const parsed = tool.input.safeParse(args ?? {});
   if (!parsed.success) throw new ToolError(parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));

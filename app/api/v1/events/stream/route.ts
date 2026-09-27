@@ -9,5 +9,6 @@ export const dynamic = "force-dynamic";
 export function GET(req: Request) {
   const auth = authenticate(db(), req.headers.get("authorization"));
   if (!auth.ok) return json({ error: auth.error }, auth.status);
-  return eventStream(req, db);
+  const header = req.headers.get("authorization");
+  return eventStream(req, db, { reauth: () => authenticate(db(), header).ok });
 }

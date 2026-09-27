@@ -56,7 +56,8 @@ export class GeminiAdapter implements ChatAdapter {
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: this.init.system }] },
         contents: this.contents,
-        tools: [{ functionDeclarations: this.init.tools.map((t) => ({ name: t.name, description: t.description, parameters: toGeminiSchema(t.schema) })) }],
+        // 전체 JSON Schema 를 그대로 전달 (OpenAPI 부분집합으로 줄이면 run_action.params 같은 자유 객체가 비어 버린다)
+        tools: [{ functionDeclarations: this.init.tools.map((t) => ({ name: t.name, description: t.description, parametersJsonSchema: t.schema })) }],
       }),
       signal: AbortSignal.timeout(300_000),
     });

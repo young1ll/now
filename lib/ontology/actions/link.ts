@@ -60,7 +60,7 @@ export const linkActions = [
     title: "링크 해제",
     description: "사용자 정의 링크를 삭제한다.",
     objectType: "system",
-    risk: "low",
+    risk: "high",
     fields: { link_id: f.number("링크 id", { required: true, int: true, min: 1 }) },
     run({ db }, i) {
       const l = db.prepare("SELECT * FROM links WHERE id = ?").get(i.link_id) as

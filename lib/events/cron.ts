@@ -4,7 +4,7 @@ const RANGES = [
   [0, 23],
   [1, 31],
   [1, 12],
-  [0, 6],
+  [0, 7],
 ] as const;
 
 function parseField(f: string, [lo, hi]: readonly [number, number]): Set<number> {
@@ -26,7 +26,7 @@ export function parseCron(expr: string) {
   if (f.length !== 5) throw new Error("cron 은 5개 필드여야 합니다 (분 시 일 월 요일)");
   const sets = f.map((x, i) => parseField(x, RANGES[i]));
   // 요일 7 → 0 (일요일) 허용
-  if (f[4].includes("7")) sets[4].add(0);
+  if (sets[4].delete(7)) sets[4].add(0);
   return { sets, domStar: f[2] === "*", dowStar: f[4] === "*" };
 }
 

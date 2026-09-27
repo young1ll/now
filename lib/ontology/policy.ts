@@ -1,4 +1,5 @@
 import type { DB } from "@/lib/db";
+import { getAgent } from "@/lib/repos/agents";
 import { getAiMode } from "@/lib/repos/settings";
 import type { AnyAction } from "./action";
 import type { Actor, Risk } from "./types";
@@ -11,6 +12,9 @@ export type Decision = { kind: "execute" } | { kind: "approval"; why: string } |
  */
 export function decide(db: DB, actor: Actor, def: AnyAction, risk: Risk): Decision {
   if (actor.type !== "agent") return { kind: "execute" };
+  // 실행 중인 세션이라도 에이전트가 정지·폐기되면 그 순간부터 쓰기 거부
+  const agent = getAgent(db, Number(actor.id));
+  if (!agent || agent.status !== "active") return { kind: "deny", why: "에이전트가 정지·폐기 상태입니다" };
   if (def.humanOnly) return { kind: "deny", why: "사람만 실행할 수 있는 액션입니다" };
   switch (getAiMode(db)) {
     case "frozen":

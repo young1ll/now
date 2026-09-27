@@ -84,7 +84,8 @@ export function executeAction(db: DB, req: ExecuteRequest): ExecuteResult {
     if (!isAgent) throw new ActionError(msg);
     return record({ action: def.name, actor, risk: "low", status: "failed", params: input, reason: req.reason, error: msg });
   }
-  const base = { action: def.name, actor, risk, params: input, reason: req.reason, refs: target ? [target] : [] };
+  const stored = def.redact?.length && def.humanOnly ? Object.fromEntries(Object.entries(input).map(([k, v]) => [k, def.redact!.includes(k) && v ? "[redacted]" : v])) : input;
+  const base = { action: def.name, actor, risk, params: stored, reason: req.reason, refs: target ? [target] : [] };
   const decision = decide(db, actor, def, risk);
 
   if (decision.kind === "deny") return record({ ...base, status: "denied", error: decision.why });

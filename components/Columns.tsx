@@ -85,8 +85,8 @@ export function Columns({
         <div key={i} className="contents">
           <section
             data-col={i}
-            className={`flex min-h-0 min-w-0 flex-col overflow-hidden bg-panel max-md:border-b max-md:border-line ${i === g ? "md:flex-1" : "md:shrink-0"}`}
-            style={i === g ? undefined : { width: width(widths, i) }}
+            className={`flex min-h-0 min-w-0 flex-col overflow-hidden bg-panel max-md:w-full max-md:border-b max-md:border-line ${i === g ? "md:flex-1" : "md:w-[var(--col-w)] md:shrink-0"}`}
+            style={i === g ? undefined : ({ "--col-w": `${width(widths, i)}px` } as React.CSSProperties)}
           >
             {pane}
           </section>

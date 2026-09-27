@@ -20,6 +20,8 @@ export type ActionDef<S extends Fields = Fields> = {
   risk: Risk | ((db: DB, input: InputOf<S>) => Risk);
   /** 사람만 실행 가능 (에이전트 관리, AI 모드 변경 등) */
   humanOnly?: boolean;
+  /** 감사 기록에 남기지 않을 파라미터 (URL 에 비밀이 든 웹훅 등). humanOnly 액션에만 쓴다 — 승인 재실행에 원본이 필요 없도록 */
+  redact?: string[];
   /** 트랜잭션 밖에서 실행해야 하는 액션 (VACUUM INTO 백업 등) */
   noTransaction?: boolean;
   /** 기존 객체를 대상으로 하는 액션이면 대상 유형과 id 파라미터 */

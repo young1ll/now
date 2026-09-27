@@ -21,7 +21,7 @@ const triggerFields = {
   target: f.enum("대상", ["agent", "webhook"] as const, { agent: "AI 에이전트 실행", webhook: "웹훅 POST" }, { required: true }),
   profile_id: f.choice("AI 프로필", "ai_profiles"),
   prompt_template: f.textarea("프롬프트 템플릿", { help: "{{event.type}} · {{event.payload.title}} · {{event_json}} 치환. 비우면 기본 지시문" }),
-  webhook_url: f.text("웹훅 URL", { max: 500, placeholder: "https://…" }),
+  webhook_url: f.text("웹훅 URL", { max: 500, placeholder: "https://… 또는 env:SLACK_WEBHOOK_URL", help: "URL 에 비밀이 들어 있으면(Slack·Discord) env:환경변수이름 으로 — 발송 시점에 읽는다" }),
   secret_env: f.text("서명 비밀 환경변수 이름", { help: "X-Now-Signature: sha256=HMAC(본문) — 값은 .env.local 에만" }),
   cooldown_sec: f.number("쿨다운 (초)", { int: true, min: 0, max: 86400 }),
   enabled: f.boolean("활성"),
@@ -44,7 +44,7 @@ function normalizeTrigger(i: TriggerIn) {
     const err = validateCron(String(i.schedule ?? ""));
     if (err) throw new ActionError(err);
   }
-  if (target === "webhook" && !/^https?:\/\//.test(String(i.webhook_url ?? ""))) throw new ActionError("웹훅 URL 은 http(s):// 로 시작해야 합니다");
+  if (target === "webhook" && !/^(https?:\/\/|env:[A-Z_][A-Z0-9_]*$)/.test(String(i.webhook_url ?? ""))) throw new ActionError("웹훅 URL 은 http(s):// 또는 env:환경변수이름 이어야 합니다");
   if (target === "agent" && !i.profile_id) throw new ActionError("AI 프로필을 선택하세요");
   const secret = String(i.secret_env ?? "").trim();
   if (secret && !/^[A-Z_][A-Z0-9_]*$/.test(secret)) throw new ActionError("서명 비밀에는 값이 아니라 환경변수 이름만 입력하세요");
@@ -106,6 +106,7 @@ export const automationActions = [
     objectType: "system",
     risk: "high",
     humanOnly: true,
+    redact: ["webhook_url"],
     fields: triggerFields,
     run({ db }, i) {
       const id = insertTrigger(db, normalizeTrigger(i));
@@ -119,6 +120,7 @@ export const automationActions = [
     objectType: "system",
     risk: "high",
     humanOnly: true,
+    redact: ["webhook_url"],
     fields: { id: f.number("트리거 id", { required: true, int: true, min: 1 }), ...Object.fromEntries(Object.entries(triggerFields).map(([k, v]) => [k, { ...v, schema: v.schema.optional(), spec: { ...v.spec, required: false } }])) } as typeof triggerFields & { id: ReturnType<typeof f.number> },
     run({ db }, i) {
       const cur = must(getTrigger(db, Number(i.id)), "트리거");
