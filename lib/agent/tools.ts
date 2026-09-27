@@ -172,9 +172,9 @@ export const TOOLS: Tool[] = [
     },
     (db, actor, { action, params, reason }) => runOut(executeAction(db, { actor, action, params, reason })),
   ),
-  def("get_run", "액션 실행 기록 조회 (승인 대기 요청의 결과 확인용).", { run_id: z.number().int().positive() }, (db, _a, { run_id }) => {
+  def("get_run", "내가 요청한 액션 실행 기록 조회 (승인 대기 요청의 결과 확인용).", { run_id: z.number().int().positive() }, (db, _a, { run_id }) => {
     const r = getRun(db, run_id);
-    if (!r) throw new ToolError(`run ${run_id} 없음`);
+    if (!r || r.actor_type !== "agent" || r.actor_id !== _a.id) throw new ToolError(`run ${run_id} 없음 (내가 요청한 실행만 조회 가능)`);
     return { ...runOut(r), params: r.params };
   }),
   def(

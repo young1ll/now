@@ -86,7 +86,9 @@ npm run iac:audit                    # 현행 감사 → 콘솔 /system (cron �
 ## 보안 모델 (로컬 단일 운영자)
 
 - 콘솔에는 로그인이 없습니다 → **127.0.0.1 에만 노출** (IaC 기본값). 외부 공개 전 인증 추가 필요 (로드맵).
-- 에이전트는 토큰(SHA-256 해시만 저장)으로 인증, 요청마다 상태 확인 → 정지 즉시 차단.
+- `proxy.ts` 가 localhost·127.0.0.1 외 Host 를 거부 (DNS 리바인딩 차단, 추가 호스트는 `NOW_ALLOWED_HOSTS`).
+- 에이전트는 토큰(SHA-256 해시만 저장)으로 인증, 요청마다 상태 확인 → 정지 즉시 차단, 대기 요청 자동 철회.
+- 에이전트는 자기 실행 기록만 조회. 승인 대기 중 대상이 바뀌면 승인해도 실행되지 않는다.
 - 비밀값은 DB·감사 로그·IaC 스냅샷에 남기지 않습니다 (env 는 키 이름만 기록).
 
 기술 스택: Next.js 16 · React 19 · TypeScript · Tailwind CSS 4 · better-sqlite3 · zod 4 · OpenTofu (kreuzwerker/docker)

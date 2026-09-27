@@ -45,8 +45,9 @@ function make<T>(base: z.ZodType<T>, spec: FieldSpec): Field<T> {
 }
 
 export const f = {
-  text(label: string, o: Opts & { max?: number } = {}) {
-    const base = o.required ? z.string().trim().min(1, `${label}을(를) 입력하세요`) : z.string().trim();
+  /** nonEmpty: 생략은 허용하되 넘기면 빈 값 금지 (부분 수정의 이름·제목) */
+  text(label: string, o: Opts & { max?: number; nonEmpty?: boolean } = {}) {
+    const base = o.required || o.nonEmpty ? z.string().trim().min(1, `${label}을(를) 비울 수 없습니다`) : z.string().trim();
     return make(base.max(o.max ?? 200), { kind: "text", label, required: !!o.required, help: o.help, placeholder: o.placeholder });
   },
   textarea(label: string, o: Opts = {}) {

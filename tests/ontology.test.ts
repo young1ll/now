@@ -288,3 +288,58 @@ describe("IaC 감사 파서", () => {
     assert.deepEqual(parseChanges(plan), [{ address: "docker_container.app", type: "docker_container", actions: ["delete", "create"] }]);
   });
 });
+
+describe("리뷰 반영 — 거버넌스 회귀 테스트", () => {
+  it("승인 대기 중 대상이 바뀌면 승인해도 실행되지 않는다", () => {
+    const { db, a, agent, human, run } = setup();
+    const inv = run(agent, "invoice.create", { business_id: a, items: [{ description: "x", unit_price: 100000 }] }).refs[0].id;
+    const issue = run(agent, "invoice.issue", { id: inv });
+    assert.equal(issue.status, "pending");
+    run(agent, "invoice.update", { id: inv, items: [{ description: "x", unit_price: 99_000_000 }] }); // 저위험(초안)이라 즉시
+    const r = approveRun(db, issue.id, human);
+    assert.equal(r.status, "failed");
+    assert.match(r.error!, /변경/);
+    assert.equal(getInvoice(db, inv)!.invoice.status, "draft");
+  });
+
+  it("정지된 에이전트의 대기 요청은 자동 철회되고, 승인도 불가", () => {
+    const { db, a, agent, agentId, human, run } = setup();
+    const t = run(human, "task.create", { business_id: a, title: "t" }).refs[0].id;
+    const del = run(agent, "task.delete", { id: t });
+    run(human, "agent.set_status", { id: agentId, status: "suspended" });
+    assert.equal(listRuns(db, { status: "pending" }).length, 0);
+    assert.throws(() => approveRun(db, del.id, human), ActionError);
+  });
+
+  it("이름·제목을 빈 값으로 수정할 수 없다", () => {
+    const { a, agent, human, run } = setup();
+    const c = run(human, "client.create", { business_id: a, name: "A" }).refs[0].id;
+    assert.equal(run(agent, "client.update", { id: c, name: "  " }).status, "failed");
+  });
+
+  it("음수 지출·초과 입금·다른 사업 고객 연결 거부", () => {
+    const { a, b, agent, human, run } = setup();
+    assert.throws(() => run(human, "expense.record", { business_id: a, description: "x", amount: "-5000" }), ActionError);
+    const inv = run(human, "invoice.create", { business_id: a, items: [{ description: "x", unit_price: 1000 }] }).refs[0].id;
+    run(human, "invoice.issue", { id: inv });
+    assert.throws(() => run(human, "payment.record", { invoice_id: inv, amount: 5_000_000 }), ActionError);
+    const other = run(human, "client.create", { business_id: b, name: "B사" }).refs[0].id;
+    assert.throws(() => run(human, "task.create", { business_id: a, title: "t", client_id: other }), ActionError);
+    assert.equal(run(agent, "task.create", { business_id: a, title: "t", client_id: 999 }).status, "failed");
+  });
+
+  it("다른 에이전트의 run 은 조회할 수 없다", () => {
+    const { db, a, agent, run } = setup();
+    const r = run(agent, "task.create", { business_id: a, title: "t" });
+    const other: Actor = { type: "agent", id: "999", name: "남" };
+    assert.throws(() => callTool(db, other, "get_run", { run_id: r.id }));
+    assert.equal((callTool(db, agent, "get_run", { run_id: r.id }) as { status: string }).status, "applied");
+  });
+
+  it("MCP: id 없는 tools/call 은 실행하지 않는다", () => {
+    const { db, a, agent } = setup();
+    const res = handleMcp(db, agent, { jsonrpc: "2.0", method: "tools/call", params: { name: "run_action", arguments: { action: "task.create", params: { business_id: a, title: "몰래" }, reason: "x" } } });
+    assert.equal(res, null);
+    assert.equal(listRuns(db).length, 0);
+  });
+});

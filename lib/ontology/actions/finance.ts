@@ -2,7 +2,6 @@ import { addDays, today } from "@/lib/dates";
 import { EXPENSE_CATEGORIES } from "@/lib/labels";
 import { formatMoney, toMajor } from "@/lib/money";
 import { getBusiness } from "@/lib/repos/businesses";
-import { getClient } from "@/lib/repos/clients";
 import {
   addExpense, addPayment, createInvoice, deleteExpense, deleteInvoice, deletePayment, getInvoice,
   setInvoiceStatus, updateInvoice,
@@ -12,7 +11,7 @@ import { defineAction } from "../action";
 import { f } from "../fields";
 import { displayId } from "../ids";
 import { ActionError } from "../types";
-import { must, toMinor } from "./util";
+import { checkClient, must, toMinor } from "./util";
 
 const CATS = EXPENSE_CATEGORIES as unknown as readonly [string, ...string[]];
 const catLabels = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c, c])) as Record<string, string>;
@@ -48,7 +47,7 @@ export const financeActions = [
     },
     run({ db }, i) {
       const b = must(getBusiness(db, i.business_id), "사업");
-      if (i.client_id) must(getClient(db, i.client_id), "고객");
+      checkClient(db, i.client_id, b.id);
       const issue = i.issue_date ?? today();
       const id = createInvoice(db, {
         business_id: b.id,
@@ -82,6 +81,7 @@ export const financeActions = [
     run({ db }, i) {
       const { invoice: inv } = must(getInvoice(db, i.id), "청구서");
       if (inv.status === "void") throw new ActionError("취소된 청구서는 수정할 수 없습니다");
+      checkClient(db, i.client_id, inv.business_id);
       updateInvoice(db, i.id, {
         business_id: inv.business_id,
         client_id: i.client_id === undefined ? inv.client_id : i.client_id,
@@ -168,6 +168,7 @@ export const financeActions = [
       if (inv.status !== "sent") throw new ActionError(`발행(sent) 상태의 청구서에만 입금을 기록할 수 있습니다 (현재: ${inv.status})`);
       const amount = i.amount === undefined ? inv.balance : toMinor(i.amount, inv.currency, "입금액");
       if (amount <= 0) throw new ActionError("입금액은 0 보다 커야 합니다");
+      if (amount > inv.balance) throw new ActionError(`입금액이 잔액(${formatMoney(inv.balance, inv.currency)})보다 큽니다`);
       const id = addPayment(db, { invoice_id: inv.id, amount, paid_at: i.paid_at ?? today(), method: i.method ?? "" });
       return { summary: `${inv.number} 입금 ${formatMoney(amount, inv.currency)}`, refs: [{ type: "invoice", id: inv.id }], data: { payment_id: id } };
     },
@@ -210,6 +211,7 @@ export const financeActions = [
     run({ db }, i) {
       const b = must(getBusiness(db, i.business_id), "사업");
       const amount = toMinor(i.amount, b.currency);
+      if (amount <= 0) throw new ActionError("지출 금액은 0 보다 커야 합니다");
       const id = addExpense(db, { business_id: b.id, category: i.category ?? "기타", description: i.description, amount, spent_at: i.spent_at ?? today() });
       return { summary: `지출 ${displayId("expense", id)} ${formatMoney(amount, b.currency)} · ${i.description}`, refs: [{ type: "expense", id }] };
     },

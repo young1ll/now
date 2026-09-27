@@ -52,7 +52,7 @@ export function insertSnapshot(db: DB, s: Omit<Snapshot, "id" | "resource_count"
 }
 
 export function latestSnapshot(db: DB): Snapshot | undefined {
-  const r = db.prepare("SELECT * FROM infra_snapshots ORDER BY captured_at DESC, id DESC LIMIT 1").get() as Row | undefined;
+  const r = db.prepare("SELECT * FROM infra_snapshots ORDER BY id DESC LIMIT 1").get() as Row | undefined;
   return r && parse(r);
 }
 
@@ -60,7 +60,7 @@ export function listSnapshots(db: DB, limit = 20): Omit<Snapshot, "resources" | 
   return db
     .prepare(
       `SELECT id, captured_at, tool, status, resource_count, change_count, message
-       FROM infra_snapshots ORDER BY captured_at DESC, id DESC LIMIT ?`,
+       FROM infra_snapshots ORDER BY id DESC LIMIT ?`,
     )
     .all(limit) as Omit<Snapshot, "resources" | "changes">[];
 }

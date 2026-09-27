@@ -1,18 +1,17 @@
 import { PRIORITY, RECURRENCE, TASK_STATUS } from "@/lib/labels";
 import { getBusiness } from "@/lib/repos/businesses";
-import { getClient } from "@/lib/repos/clients";
 import { RECURRENCES, TASK_STATUSES, createTask, deleteTask, getTask, setTaskStatus, updateTask } from "@/lib/repos/tasks";
 import { defineAction } from "../action";
 import { f } from "../fields";
 import { displayId } from "../ids";
 import { ActionError } from "../types";
-import { labels, merge, must } from "./util";
+import { checkBusiness, checkClient, labels, merge, must } from "./util";
 
 const PRIORITIES = ["1", "2", "3"] as const;
 const prioLabels = { "1": PRIORITY[1], "2": PRIORITY[2], "3": PRIORITY[3] };
 
 const taskFields = {
-  title: f.text("업무명"),
+  title: f.text("업무명", { nonEmpty: true }),
   detail: f.textarea("상세"),
   client_id: f.ref("고객", "client", { nullable: true }),
   priority: f.enum("우선순위", PRIORITIES, prioLabels),
@@ -30,7 +29,7 @@ export const taskActions = [
     fields: { business_id: f.ref("사업", "business", { required: true }), ...taskFields, title: f.text("업무명", { required: true }) },
     run({ db }, i) {
       must(getBusiness(db, i.business_id), "사업");
-      if (i.client_id) must(getClient(db, i.client_id), "고객");
+      checkClient(db, i.client_id, i.business_id);
       const id = createTask(db, {
         business_id: i.business_id,
         client_id: i.client_id ?? null,
@@ -60,6 +59,8 @@ export const taskActions = [
     run({ db }, i) {
       const cur = must(getTask(db, i.id), "업무");
       const next = merge(cur, { ...i, priority: i.priority === undefined ? undefined : Number(i.priority) });
+      checkBusiness(db, next.business_id);
+      checkClient(db, next.client_id, next.business_id);
       updateTask(db, i.id, next);
       return { summary: `업무 ${displayId("task", i.id)} '${next.title}' 수정`, refs: [{ type: "task", id: i.id }] };
     },

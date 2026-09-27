@@ -75,7 +75,7 @@ claude mcp add --env NOW_AGENT_TOKEN=now_… now -- npx tsx scripts/mcp-stdio.ts
 | `GET /api/v1/actions` | list_actions |
 | `POST /api/v1/actions/{name}` `{"params":{…},"reason":"…"}` | run_action |
 | `GET /api/v1/runs` · `/runs/{id}` · `DELETE /runs/{id}` | 내 실행 · 조회 · 철회 |
-| `POST /api/v1/iac/snapshots` | IaC 감사 결과 수신 (`iac:audit` 이 사용) |
+| `POST /api/v1/iac/snapshots` | IaC 감사 결과 수신 (`iac:audit` 이 사용 · 동결 모드 거부 · 활동 로그 기록) |
 | `GET /api/health` | 인증 없음 |
 
 ## 5. 권장 에이전트 지침 (시스템 프롬프트에 넣기)

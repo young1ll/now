@@ -3,13 +3,15 @@ import { decideRun } from "@/app/actions/console";
 import { Icon } from "@/components/icons";
 import { Actor, ObjectLink, RUN_STATUS, Tag, fmtTime, timeAgo } from "@/components/ui";
 import { db } from "@/lib/db";
-import { getAction } from "@/lib/ontology/execute";
+import { getAction, isStale } from "@/lib/ontology/execute";
 import type { FieldSpec } from "@/lib/ontology/fields";
 import { displayId, runId } from "@/lib/ontology/ids";
 import type { RunView } from "@/lib/repos/runs";
 
+const EXTRA_TITLES: Record<string, string> = { "iac.record_snapshot": "IaC 감사 기록" };
+
 export function actionTitle(name: string) {
-  return getAction(name)?.title ?? name;
+  return getAction(name)?.title ?? EXTRA_TITLES[name] ?? name;
 }
 
 /** 필드 명세에 맞춰 사람이 읽을 값으로: ref → CLT-0003, enum → 라벨 */
@@ -96,6 +98,11 @@ export function ApprovalCard({ run, dense = false }: { run: RunView; dense?: boo
       </header>
       <div className="space-y-2 p-3">
         <div className="text-[13px]">{run.result?.summary}</div>
+        {isStale(db(), run) && (
+          <div className="border-l-2 border-danger bg-danger/10 px-2.5 py-1.5 text-[12px] text-danger-fg">
+            요청 이후 대상 객체가 변경되었습니다{def?.preview ? ` — 지금 기준: ${def.preview(db(), run.params as never)}` : ""}. 승인해도 실행되지 않으니 거절하고 에이전트에게 다시 요청하게 하세요.
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px]">
           <Actor type={run.actor_type} name={run.actor_name} />
           {run.refs.map((x) => <ObjectLink key={`${x.type}${x.id}`} type={x.type} id={x.id} />)}

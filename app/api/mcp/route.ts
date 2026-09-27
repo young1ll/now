@@ -19,6 +19,9 @@ export async function POST(req: Request) {
   } catch {
     return Response.json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }, { status: 400 });
   }
+  if (Array.isArray(body) && body.length === 0) {
+    return Response.json({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid Request: empty batch" } }, { status: 400 });
+  }
   const messages = (Array.isArray(body) ? body : [body]) as JsonRpcRequest[];
   const responses = messages.map((m) => handleMcp(db(), auth.actor, m)).filter((r) => r !== null);
   if (responses.length === 0) return new Response(null, { status: 202 });

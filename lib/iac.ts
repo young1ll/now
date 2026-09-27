@@ -25,7 +25,7 @@ function scalar(v: unknown): string | undefined {
   return undefined;
 }
 
-/** 유형별로 감사에 의미 있는 속성. 목록에 없는 유형은 비밀이 아닌 스칼라 전부. */
+/** 유형별로 감사에 의미 있는 속성 (허용 목록). 목록에 없는 유형은 이름만. */
 const KEEP: Record<string, string[]> = {
   docker_container: ["name", "image", "restart", "must_run", "memory", "memory_swap", "user", "init", "read_only"],
   docker_network: ["name", "driver", "internal"],
@@ -36,9 +36,9 @@ const KEEP: Record<string, string[]> = {
 /** 리소스 유형별로 감사에 의미 있는 속성만 추린다. 비밀로 보이는 키는 항상 제외. */
 export function auditAttributes(type: string, values: Record<string, unknown> = {}): Record<string, string> {
   const out: Record<string, string> = {};
-  const keep = KEEP[type];
+  const keep = KEEP[type] ?? ["name"];
   for (const [k, v] of Object.entries(values)) {
-    if (SECRET.test(k) || (keep && !keep.includes(k))) continue;
+    if (SECRET.test(k) || !keep.includes(k)) continue;
     const s = scalar(v);
     if (s !== undefined) out[k] = s;
   }

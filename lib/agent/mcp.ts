@@ -28,8 +28,9 @@ function fail(id: Id, code: number, message: string): JsonRpcResponse {
 /** 메시지 하나 처리. 알림(id 없음)이면 null. */
 export function handleMcp(db: DB, actor: Actor, msg: JsonRpcRequest): JsonRpcResponse | null {
   if (!msg || msg.jsonrpc !== "2.0" || typeof msg.method !== "string") return fail(msg?.id ?? null, -32600, "Invalid Request");
-  const isNotification = msg.id === undefined;
-  const id = msg.id ?? null;
+  // id 없는 메시지는 알림 — 어떤 것도 실행하지 않고 응답하지 않는다
+  if (msg.id === undefined) return null;
+  const id = msg.id;
 
   switch (msg.method) {
     case "initialize": {
@@ -41,9 +42,6 @@ export function handleMcp(db: DB, actor: Actor, msg: JsonRpcRequest): JsonRpcRes
         instructions: INSTRUCTIONS,
       });
     }
-    case "notifications/initialized":
-    case "notifications/cancelled":
-      return null;
     case "ping":
       return ok(id, {});
     case "tools/list":
@@ -62,6 +60,6 @@ export function handleMcp(db: DB, actor: Actor, msg: JsonRpcRequest): JsonRpcRes
       }
     }
     default:
-      return isNotification ? null : fail(id, -32601, `Method not found: ${msg.method}`);
+      return fail(id, -32601, `Method not found: ${msg.method}`);
   }
 }

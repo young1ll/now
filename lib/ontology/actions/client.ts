@@ -7,12 +7,12 @@ import {
 import { defineAction } from "../action";
 import { f } from "../fields";
 import { displayId } from "../ids";
-import { labels, merge, must, normTags } from "./util";
+import { checkBusiness, labels, merge, must, normTags } from "./util";
 
 const KINDS = ["company", "person"] as const;
 
 const clientFields = {
-  name: f.text("이름"),
+  name: f.text("이름", { nonEmpty: true }),
   kind: f.enum("구분", KINDS, CLIENT_KIND),
   status: f.enum("상태", CLIENT_STATUSES, labels(CLIENT_STATUS)),
   email: f.email("이메일"),
@@ -60,6 +60,7 @@ export const clientActions = [
     preview: (db, i) => `고객 '${getClient(db, i.id)?.name ?? i.id}' 정보 수정`,
     run({ db }, i) {
       const cur = must(getClient(db, i.id), "고객");
+      checkBusiness(db, i.business_id);
       const next = merge(cur, { ...i, tags: normTags(i.tags) });
       updateClient(db, i.id, next);
       return { summary: `고객 ${displayId("client", i.id)} '${next.name}' 수정`, refs: [{ type: "client", id: i.id }] };

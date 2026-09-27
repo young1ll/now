@@ -41,7 +41,7 @@ export const businessActions = [
     target: { type: "business", param: "id" },
     fields: {
       id: f.ref("사업", "business", { required: true }),
-      name: f.text("사업 이름"),
+      name: f.text("사업 이름", { nonEmpty: true }),
       kind: f.text("업종 · 설명"),
       currency: f.enum("기본 통화", CUR, curLabels),
       color: f.text("색상", { help: "#RRGGBB", max: 7 }),

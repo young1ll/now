@@ -136,7 +136,7 @@ export function ActionForm({
             hint={field.spec.kind === "money" || field.spec.kind === "tags" ? field.spec.help : undefined}
             className={wide.has(field.spec.kind) || field.spec.kind === "ref" && !locked.includes(name) ? "col-span-2" : ""}
           >
-            <Input name={name} spec={field.spec} value={values[name]} db={db} scope={scope} locked={locked.includes(name)} />
+            <Input name={name} spec={field.spec} value={values[name]} db={db} scope={def.target ? null : scope} locked={locked.includes(name)} />
           </Field>
         ))}
       </div>

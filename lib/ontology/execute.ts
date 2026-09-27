@@ -1,11 +1,14 @@
+import crypto from "node:crypto";
 import { z } from "zod";
 import type { DB } from "@/lib/db";
 import { type RunView, completeRun, getRun, insertRun } from "@/lib/repos/runs";
 import { type AnyAction, resolveRisk, targetRef } from "./action";
 import { ACTIONS } from "./actions";
 import { formatZodError } from "./fields";
+import { getObject } from "./objects";
 import { decide } from "./policy";
-import { ActionError, type Actor } from "./types";
+import { getAgent } from "@/lib/repos/agents";
+import { ActionError, type Actor, type Ref } from "./types";
 
 export type ExecuteRequest = {
   actor: Actor;
@@ -14,6 +17,21 @@ export type ExecuteRequest = {
   /** 에이전트의 실행 근거 — 승인자와 감사 로그에 보인다 */
   reason?: string;
 };
+
+/** 대상 객체의 현재 상태 지문. 승인 대기 중 대상이 바뀌면 승인 시 거부하기 위해 쓴다. */
+export function fingerprint(db: DB, ref: Ref | undefined): string | null {
+  if (!ref) return null;
+  const raw = getObject(db, ref)?.raw ?? null;
+  return crypto.createHash("sha256").update(JSON.stringify(raw)).digest("hex").slice(0, 16);
+}
+
+/** 요청 이후 대상 객체가 바뀌었는지 (승인 화면 경고·승인 거부용) */
+export function isStale(db: DB, run: RunView): boolean {
+  const fp = (run.result?.data as { fingerprint?: string } | undefined)?.fingerprint;
+  const def = getAction(run.action);
+  if (!fp || !def) return false;
+  return fingerprint(db, targetRef(def, run.params)) !== fp;
+}
 
 export function getAction(name: string): AnyAction | undefined {
   return Object.hasOwn(ACTIONS, name) ? ACTIONS[name] : undefined;
@@ -66,7 +84,7 @@ export function executeAction(db: DB, req: ExecuteRequest): ExecuteResult {
   if (decision.kind === "deny") return record({ ...base, status: "denied", error: decision.why });
   if (decision.kind === "approval") {
     const summary = def.preview?.(db, input as never) ?? def.title;
-    return record({ ...base, status: "pending", result: { summary, refs: [] }, error: null });
+    return record({ ...base, status: "pending", result: { summary, refs: [], data: { fingerprint: fingerprint(db, target) } }, error: null });
   }
 
   try {
@@ -89,6 +107,14 @@ export function approveRun(db: DB, runId: number, human: Actor, note = ""): RunV
   const def = getAction(run.action);
   if (!def) throw new ActionError(`알 수 없는 액션: ${run.action}`);
   const actor: Actor = { type: run.actor_type, id: run.actor_id, name: run.actor_name };
+  const refuse = (why: string) => {
+    completeRun(db, runId, { status: "failed", error: why, decided_by: human.name, decision_note: note });
+    return getRun(db, runId)!;
+  };
+  if (actor.type === "agent" && getAgent(db, Number(actor.id))?.status !== "active") {
+    return refuse("요청한 에이전트가 정지·폐기되어 실행하지 않았습니다");
+  }
+  if (isStale(db, run)) return refuse("요청 이후 대상 객체가 변경되어 실행하지 않았습니다 — 다시 요청해야 합니다");
   try {
     const result = apply(db, def, actor, parse(def, run.params));
     completeRun(db, runId, { status: "applied", result, decided_by: human.name, decision_note: note });

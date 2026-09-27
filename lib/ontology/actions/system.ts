@@ -1,6 +1,7 @@
 import { AGENT_STATUSES, createAgent, getAgent, setAgentStatus } from "@/lib/repos/agents";
 import { AI_MODES, getAiMode, setSetting } from "@/lib/repos/settings";
 import { backupNow } from "@/lib/system";
+import { completeRun, listRuns } from "@/lib/repos/runs";
 import { defineAction } from "../action";
 import { f } from "../fields";
 import { displayId } from "../ids";
@@ -56,11 +57,21 @@ export const systemActions = [
       id: f.ref("에이전트", "agent", { required: true }),
       status: f.enum("상태", AGENT_STATUSES, AGENT_STATUS_LABEL, { required: true }),
     },
-    run({ db }, i) {
+    run({ db, actor }, i) {
       const a = must(getAgent(db, i.id), "에이전트");
       if (a.status === "revoked") throw new ActionError("폐기된 에이전트는 되살릴 수 없습니다. 새로 등록하세요");
       setAgentStatus(db, i.id, i.status);
-      return { summary: `에이전트 '${a.name}' → ${AGENT_STATUS_LABEL[i.status]}`, refs: [{ type: "agent", id: i.id }] };
+      let cancelled = 0;
+      if (i.status !== "active") {
+        for (const r of listRuns(db, { actorType: "agent", actorId: String(i.id), status: "pending", limit: 1000 })) {
+          completeRun(db, r.id, { status: "cancelled", decided_by: actor.name, decision_note: `에이전트 ${AGENT_STATUS_LABEL[i.status]}로 자동 철회` });
+          cancelled++;
+        }
+      }
+      return {
+        summary: `에이전트 '${a.name}' → ${AGENT_STATUS_LABEL[i.status]}${cancelled ? ` · 대기 요청 ${cancelled}건 철회` : ""}`,
+        refs: [{ type: "agent", id: i.id }],
+      };
     },
   }),
   defineAction({

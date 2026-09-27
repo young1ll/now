@@ -1,5 +1,20 @@
 import { parseMoney, formatMoney } from "@/lib/money";
+import type { DB } from "@/lib/db";
+import { getBusiness } from "@/lib/repos/businesses";
+import { getClient } from "@/lib/repos/clients";
 import { ActionError } from "../types";
+
+/** 사업이 존재하는지 */
+export function checkBusiness(db: DB, id: number | null | undefined) {
+  if (id != null) must(getBusiness(db, id), "사업");
+}
+
+/** 고객이 존재하고, businessId 가 주어지면 같은 사업 소속인지 */
+export function checkClient(db: DB, clientId: number | null | undefined, businessId?: number | null) {
+  if (clientId == null) return;
+  const c = must(getClient(db, clientId), "고객");
+  if (businessId != null && c.business_id !== businessId) throw new ActionError(`고객 '${c.name}' 은(는) 다른 사업 소속입니다`);
+}
 
 export function toMinor(v: number | string, currency: string, label = "금액"): number {
   const n = parseMoney(String(v), currency);
