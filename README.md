@@ -1,151 +1,82 @@
-# TaxBrief
+# Now — 1인 사업가를 위한 사업 운영 체제
 
-> 1인 세무사를 위한 상담 보조 데스크톱(로컬 웹) 도구.
-> 질문 한 줄을 입력하면 **국가법령정보센터 OPEN API**로 관련 법령을 찾아내고,
-> Claude가 **근거 인용 답변**을 작성하여 화면에 표시합니다.
-> 브라우저 인쇄(Ctrl/Cmd+P → PDF로 저장)로 고객용 PDF 보고서를 만듭니다.
+여러 사업을 동시에 굴리는 1인 창업가가 **고객 · 업무 · 매출 · 지식 · 인프라**를 한 화면에서 운영하기 위한 로컬 웹앱입니다.
+모든 데이터는 내 컴퓨터의 SQLite 파일 하나에 저장되며, 외부 서버나 계정이 필요 없습니다.
 
-기획 상세: [docs/기획서.md](docs/기획서.md)
+| 모듈 | 하는 일 |
+|---|---|
+| **대시보드** | 이번 달 순이익, 미수금, 마감 임박·지연 업무, 인프라 이상·예산 초과를 한눈에 |
+| **고객 · 거래처** (CRM) | 고객 상태(잠재·진행·보류·종료), 접촉 이력, 고객별 업무·청구서·문서 |
+| **업무 · 마감** | 마감일·우선순위, 반복 업무(매주·매월·분기·매년 — 완료하면 다음 회차 자동 생성) |
+| **매출 · 청구 · 정산** | 청구서(부가세·일련번호·PDF 인쇄), 입금 기록 → 자동 완납 처리, 지출, 월별 손익(현금주의, 통화별) |
+| **지식 · 문서** | SOP·체크리스트·템플릿을 마크다운으로, 전문 검색(FTS5)·태그·공용 문서 |
+| **인프라** | AWS · GCP · Azure · Palantir · HTTP 서비스 연결 등록, 헬스체크, 자격증명 설정 여부, 월 비용 vs 예산 |
+
+사이드바의 **사업 범위**로 "전체 사업" ↔ 특정 사업을 전환하면 모든 화면이 그 범위로 필터링됩니다.
 
 ---
 
-## 빠른 시작 (오늘 사용)
+## 빠른 시작
 
-### 1. 사전 준비
-
-- **Node.js 20+** (권장 22+)
-- **국가법령정보센터 OC 인증키** — https://open.law.go.kr 가입 후 발급
-- **Claude API 키** — https://console.anthropic.com 발급
-
-### 2. 환경변수
-
-```bash
-cp .env.local.example .env.local
-```
-
-`.env.local`을 열어 두 값을 입력:
-
-```
-LAW_OC=<발급받은 OC>
-ANTHROPIC_API_KEY=sk-ant-...
-CLAUDE_MODEL=claude-sonnet-4-6
-```
-
-> ⚠️ `.env.local`은 `.gitignore`에 포함되어 절대 커밋되지 않습니다.
-> 키가 채팅 등 외부에 노출된 적이 있다면 발급처에서 재발급 후 새 값으로 갱신하세요.
-
-### 3. 의존성 설치
+요구사항: **Node.js 22+**
 
 ```bash
 npm install
+npm run db:seed     # (선택) 예시 데이터 — 빈 DB 에서만 실행됨
+npm run dev         # http://localhost:3000
 ```
 
-### 4. (선택) 사전 검증
+매일 쓸 때는 빌드해서 실행하는 편이 빠릅니다.
 
 ```bash
-# 모킹된 통합 테스트 (네트워크 불필요, 즉시 실행)
-npm test
-
-# 보고서 레이아웃 미리보기 (외부 API 호출 없음)
-npm run demo:render
-# → ./sample-report.html 생성. 브라우저로 열어 Ctrl/Cmd+P 미리보기
-
-# 실제 외부 API 단독 검증 (네트워크 + 키 필요)
-npm run smoke:law
-npm run smoke:law "상속세 및 증여세법"
-npm run smoke:claude
-npm run smoke:claude "양도소득세 장기보유특별공제"
+npm run build && npm start
 ```
 
-`npm test`는 외부 호출을 모킹하므로 API 키 없이도 파이프라인을 검증합니다.
-`npm run smoke:*`는 실제 키와 네트워크를 사용해 응답 형식 차이를 미리 잡아냅니다.
+처음 실행하면 사업을 하나 등록하는 화면이 나옵니다.
 
-### 5. 개발 서버 실행
+## 데이터
+
+- 위치: `./data/now.db` (환경변수 `NOW_DB_PATH` 로 변경). `data/` 는 git 에 커밋되지 않습니다.
+- 백업: `npm run db:backup` → `data/backups/now-YYYYMMDD-HHMM.db` (서버 실행 중에도 안전)
+- 초기화: `npm run db:reset -- --yes`
+- 스키마는 앱 시작 시 자동 마이그레이션됩니다 (`lib/db/migrations.ts`).
+
+## 인프라 연동과 비밀값
+
+비밀값(API 키, 토큰)은 **DB 에 저장하지 않습니다.** 연결마다 *환경변수 이름*만 적고, 실제 값은 `.env.local` 에 둡니다.
 
 ```bash
-npm run dev
+cp .env.local.example .env.local
+# AWS_PROD_ACCESS_KEY=...
 ```
 
-브라우저에서 http://localhost:3000 접속.
+현재 상태 판정은 두 가지 근거만 사용합니다 — 추측하지 않습니다.
 
-### 6. 사용 흐름
+1. **헬스체크 URL** 응답: 2xx·3xx 정상 / 4xx 주의 / 5xx·무응답 장애
+2. **자격증명 환경변수** 존재 여부: 없으면 정상 → 주의로 낮춤
 
-1. 입력창에 질문 입력 (예: `1세대 1주택 비과세 거주요건`)
-2. **Ctrl/Cmd + Enter** 또는 [상담 보고서 생성] 클릭
-3. 10~25초 후 결과(요약·상세·인용·면책) 표시
-4. **Ctrl/Cmd + P** → 대상을 "PDF로 저장" 선택 → 끝
-   - 인쇄 미리보기에서 입력창·버튼은 자동으로 숨겨집니다.
+월 비용은 지금은 수동 입력입니다. 공급자 API(AWS Cost Explorer, GCP Billing, Azure Cost Management, Foundry)로 자동 수집하는 어댑터는 [로드맵](docs/ROADMAP.md)에 있습니다.
 
----
+## 개발
 
-## 구조
-
-```
-now/
-├─ app/
-│  ├─ page.tsx              # 단일 페이지 (입력 + 결과)
-│  ├─ layout.tsx
-│  ├─ globals.css           # 화면 + @media print 인쇄용 스타일
-│  └─ api/ask/route.ts      # POST /api/ask 오케스트레이션
-├─ lib/
-│  ├─ law.ts                # 국가법령정보센터 클라이언트
-│  ├─ claude.ts             # Claude (키워드 추출 + 답변 합성)
-│  └─ types.ts
-├─ scripts/
-│  ├─ smoke-law.ts          # 법령 API 단독 검증 (실 호출)
-│  ├─ smoke-claude.ts       # Claude API 단독 검증 (실 호출)
-│  └─ render-sample.ts      # 샘플 보고서 HTML 생성 (인쇄 레이아웃 미리보기)
-├─ tests/
-│  ├─ integration.test.ts   # 외부 API 모킹 통합 테스트 (npm test)
-│  └─ fixtures/
-└─ docs/기획서.md
+```bash
+npm test            # 단위·통합 테스트 (node:test, 인메모리 SQLite)
+npm run typecheck
+npm run build
 ```
 
----
-
-## 처리 흐름
-
 ```
-POST /api/ask  { question }
-  │
-  ├─ Claude: extractKeywords()    → ["소득세법", "1세대 1주택"]
-  ├─ 국가법령정보센터: searchLaws() → 상위 3건 MST
-  ├─ 국가법령정보센터: getLawBody() (병렬)
-  └─ Claude: synthesizeAnswer()
-        ↓
-  { question, summary, detail, citations[], disclaimer, generatedAt, model }
+app/                 화면 (Next.js App Router, 서버 컴포넌트)
+  actions/           서버 액션 — 폼 제출 처리 (모듈별)
+components/          공용 UI
+lib/
+  db/                SQLite 연결 + 마이그레이션
+  repos/             데이터 접근 계층 (모듈별, 순수 함수 + db 인자 → 테스트 용이)
+  infra/             인프라 공급자 정보 · 상태 점검
+  money.ts dates.ts  금액(최소 단위 정수) · 날짜('YYYY-MM-DD') 헬퍼
+scripts/             seed · reset · backup
+tests/               node:test
+docs/ROADMAP.md      다음 단계
 ```
 
----
-
-## 오늘 MVP에 의도적으로 **없는** 것
-
-- 이력 저장 (DB) · 세션 관리 · 고객 정보
-- 답변 편집 UI
-- 설정 화면 (모든 키는 `.env.local`)
-- 회사 로고·보고서 템플릿 커스터마이즈
-- 판례·해석례 조회 (법령만)
-- 캐싱·로그 인프라
-- 이메일 발송, Electron 패키징
-
-전체 보류 목록은 [docs/기획서.md §12](docs/기획서.md)에 있습니다.
-
----
-
-## 트러블슈팅
-
-| 증상 | 원인·해결 |
-|---|---|
-| `LAW_OC 환경변수가 설정되지 않았습니다` | `.env.local` 없음 또는 키 비어있음. 입력 후 dev 서버 재시작 |
-| `법령 검색 실패 (403)` | OC 키 활성화 전(발급 후 활성까지 시간 걸릴 수 있음) 또는 잘못된 키 |
-| `법령 검색 응답을 JSON으로 파싱 실패` | OC 키가 유효하지 않거나, target/type 파라미터 변경 필요. 응답 앞부분 로그 확인 |
-| `ANTHROPIC_API_KEY 환경변수…` | `.env.local`에 키 추가 후 dev 서버 재시작 |
-| PDF 인쇄 시 한글 깨짐 | OS 기본 한글 폰트 미설치. macOS/Windows 최신 버전이면 보통 OK |
-| 응답이 30초 이상 걸림 | 정상 범위 상한. 더 길면 키워드를 더 구체적으로 |
-
----
-
-## 라이선스 / 출처
-
-- 법령 데이터: **국가법령정보센터** (공공누리)
-- 본 도구는 일반 안내용이며 법적 자문이 아닙니다.
+기술 스택: Next.js 16 · React 19 · TypeScript · Tailwind CSS 4 · better-sqlite3
