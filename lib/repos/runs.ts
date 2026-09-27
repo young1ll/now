@@ -1,5 +1,6 @@
 import type { DB } from "@/lib/db";
 import type { Actor, ObjectType, Ref, Risk, RunStatus } from "@/lib/ontology/types";
+import { emitEvent } from "./events";
 
 export type Run = {
   id: number;
@@ -71,7 +72,14 @@ export function insertRun(
         r.decided_by ?? null,
       ).lastInsertRowid,
   );
-  addRefs(db, id, [...(r.refs ?? []), ...(r.result?.refs ?? [])]);
+  const refs = [...(r.result?.refs ?? []), ...(r.refs ?? [])];
+  addRefs(db, id, refs);
+  emitEvent(db, {
+    type: `action.${r.status}`,
+    actor: r.actor,
+    subject: refs[0] ?? null,
+    payload: { run_id: id, action: r.action, risk: r.risk, summary: r.result?.summary ?? null, error: r.error ?? null, reason: r.reason ?? "", refs },
+  });
   return id;
 }
 
@@ -99,6 +107,15 @@ export function completeRun(
     id,
   );
   if (u.result?.refs) addRefs(db, id, u.result.refs);
+  const run = getRun(db, id);
+  if (run) {
+    emitEvent(db, {
+      type: `action.${u.status}`,
+      actor: { type: run.actor_type, id: run.actor_id },
+      subject: run.refs[0] ?? null,
+      payload: { run_id: id, action: run.action, risk: run.risk, summary: run.result?.summary ?? null, error: run.error, decided_by: run.decided_by, decision_note: run.decision_note, refs: run.refs },
+    });
+  }
 }
 
 export function getRun(db: DB, id: number): RunView | undefined {

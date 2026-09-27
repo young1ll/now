@@ -6,6 +6,7 @@ import {
 } from "@/lib/repos/clients";
 import { defineAction } from "../action";
 import { f } from "../fields";
+import { deleteLinksFor } from "../graph";
 import { displayId } from "../ids";
 import { checkBusiness, labels, merge, must, normTags } from "./util";
 
@@ -97,6 +98,7 @@ export const clientActions = [
     run({ db }, i) {
       const c = must(getClient(db, i.id), "고객");
       deleteClient(db, i.id);
+      deleteLinksFor(db, { type: "client", id: i.id });
       return { summary: `고객 ${displayId("client", i.id)} '${c.name}' 삭제`, refs: [], data: { deleted: c } };
     },
   }),

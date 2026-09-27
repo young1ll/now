@@ -22,6 +22,9 @@ lib/ontology/
   signals.ts      computeSignals → 심각도·근거·제안 액션(파라미터 포함)
   ops.ts          오퍼레이션 집계
   form.ts         FormData → 액션 파라미터
+lib/ontology/schema.ts · graph.ts   속성·링크 유형 정의, 그래프 질의 (이웃·경로·전체)
+lib/events/       워커 (신호 감지·cron·트리거 매칭·실행), SSE
+lib/ai/           AI 런타임: 공급자 어댑터 (Anthropic SDK · OpenAI 호환 · Gemini) + 세션 실행 + 로컬 CLI
 lib/agent/
   auth.ts         Bearer 토큰 → 에이전트 행위자 (정지·폐기 거부)
   tools.ts        에이전트 도구 10종 (MCP·REST 공용)

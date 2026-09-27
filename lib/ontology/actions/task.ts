@@ -3,6 +3,7 @@ import { getBusiness } from "@/lib/repos/businesses";
 import { RECURRENCES, TASK_STATUSES, createTask, deleteTask, getTask, setTaskStatus, updateTask } from "@/lib/repos/tasks";
 import { defineAction } from "../action";
 import { f } from "../fields";
+import { deleteLinksFor } from "../graph";
 import { displayId } from "../ids";
 import { ActionError } from "../types";
 import { checkBusiness, checkClient, labels, merge, must } from "./util";
@@ -100,6 +101,7 @@ export const taskActions = [
     run({ db }, i) {
       const t = must(getTask(db, i.id), "업무");
       deleteTask(db, i.id);
+      deleteLinksFor(db, { type: "task", id: i.id });
       return { summary: `업무 ${displayId("task", i.id)} '${t.title}' 삭제`, refs: [], data: { deleted: t } };
     },
   }),

@@ -6,6 +6,9 @@ import { ACTION_LIST } from "@/lib/ontology/actions";
 import { cancelRun, executeAction } from "@/lib/ontology/execute";
 import { displayId, runId } from "@/lib/ontology/ids";
 import { OBJECTS, objectDef, searchObjects } from "@/lib/ontology/objects";
+import { type Graph, neighborhood, objectExists, parseRef, shortestPath } from "@/lib/ontology/graph";
+import { PROPERTIES, allLinkTypes } from "@/lib/ontology/schema";
+import { listEvents } from "@/lib/repos/events";
 import { opsOverview } from "@/lib/ontology/ops";
 import { computeSignals } from "@/lib/ontology/signals";
 import { ActionError, type Actor, OBJECT_TYPES } from "@/lib/ontology/types";
@@ -73,21 +76,33 @@ export const TOOLS: Tool[] = [
   ),
   def(
     "describe_ontology",
-    "객체 유형(고객·업무·청구서·지출·문서·사업·에이전트)과 각 유형에서 쓸 수 있는 액션 목록. 데이터 모델을 이해할 때 호출.",
+    "온톨로지 스키마: 객체 유형과 속성(타입), 링크 유형(외래키·감사 파생·사용자 정의, 방향·다중성), 유형별 액션. 데이터 모델을 이해할 때 먼저 호출.",
     {},
-    () => ({
+    (db) => ({
       object_types: OBJECT_TYPES.map((t) => ({
         type: t,
         label: OBJECTS[t].label,
         description: OBJECTS[t].description,
+        properties: PROPERTIES[t],
         create_action: OBJECTS[t].createAction ?? null,
         actions: OBJECTS[t].actions,
-        columns: OBJECTS[t].columns.map((c) => c.key),
+      })),
+      link_types: allLinkTypes(db).map((l) => ({
+        name: l.name,
+        from: l.fromType,
+        to: l.toType,
+        label: l.label,
+        inverse_label: l.inverseLabel,
+        cardinality: l.cardinality,
+        source: l.source,
+        description: l.description,
+        editable_with: l.source === "custom" ? "link.create / link.delete" : l.source === "intrinsic" ? "해당 객체의 update 액션 (외래키)" : "읽기 전용",
       })),
       conventions: {
         money: "raw 금액은 통화 최소 단위 정수(KRW=원, USD=센트). 액션 입력 금액은 주 통화 단위 숫자/문자열.",
         dates: "YYYY-MM-DD",
-        ids: "객체 id 는 정수. display_id(CLT-0003 등)는 사람용 표기.",
+        ids: "객체 id 는 정수. display_id(CLT-0003 등)는 사람용 표기. 객체 참조 문자열은 \"client:3\" 또는 \"CLT-0003\".",
+        graph: "traverse 로 이웃을, find_path 로 두 객체 사이 관계를 탐색한다.",
       },
     }),
   ),
@@ -172,6 +187,47 @@ export const TOOLS: Tool[] = [
     },
     (db, actor, { action, params, reason }) => runOut(executeAction(db, { actor, action, params, reason })),
   ),
+  def(
+    "traverse",
+    "그래프 탐색: 한 객체에서 depth 단계(1~4)까지 연결된 객체와 링크. 관계 맥락(누가 누구를 소개했는지, 어떤 업무가 막혀 있는지)을 파악할 때.",
+    {
+      ref: z.string().describe('시작 객체 — "client:3" 또는 "CLT-0003"'),
+      depth: z.number().int().min(1).max(4).optional().describe("탐색 깊이 (기본 1)"),
+      link_types: z.array(z.string()).optional().describe("이 링크 유형만 (예: [\"referred_by\", \"task.client\"])"),
+      limit: z.number().int().min(1).max(500).optional().describe("최대 노드 수 (기본 150)"),
+    },
+    (db, _a, { ref, depth, link_types, limit }) => {
+      const r = parseRef(ref);
+      if (!r || !objectExists(db, r)) throw new ToolError(`객체를 찾을 수 없습니다: ${ref}`);
+      return graphOut(neighborhood(db, r, { depth, linkTypes: link_types, limit }));
+    },
+  ),
+  def(
+    "find_path",
+    "두 객체 사이의 최단 관계 경로 (링크 방향 무시, 최대 6단계).",
+    { from: z.string().describe("출발 객체 참조"), to: z.string().describe("도착 객체 참조") },
+    (db, _a, { from, to }) => {
+      const a = parseRef(from);
+      const b = parseRef(to);
+      if (!a || !objectExists(db, a)) throw new ToolError(`객체를 찾을 수 없습니다: ${from}`);
+      if (!b || !objectExists(db, b)) throw new ToolError(`객체를 찾을 수 없습니다: ${to}`);
+      const g = shortestPath(db, a, b);
+      return g ? { found: true, ...graphOut(g) } : { found: false, note: "6단계 안에 연결 경로가 없습니다" };
+    },
+  ),
+  def(
+    "list_events",
+    "이벤트 로그 조회 (action.applied · action.pending · action.rejected · signal.raised · signal.resolved · schedule.fired …). after_id 로 이어서 읽으면 폴링 없이 놓친 변화를 따라잡을 수 있다.",
+    {
+      after_id: z.number().int().min(0).optional().describe("이 id 이후 이벤트 (오래된 순). 생략하면 최신 순"),
+      type: z.string().optional().describe('유형 또는 접두사 (예: "signal." · "action.pending")'),
+      limit: z.number().int().min(1).max(200).optional(),
+    },
+    (db, _a, { after_id, type, limit }) => {
+      const items = listEvents(db, { afterId: after_id, type, limit: limit ?? 50 });
+      return { events: items, last_id: items.length ? Math.max(...items.map((e) => e.id)) : (after_id ?? null) };
+    },
+  ),
   def("get_run", "내가 요청한 액션 실행 기록 조회 (승인 대기 요청의 결과 확인용).", { run_id: z.number().int().positive() }, (db, _a, { run_id }) => {
     const r = getRun(db, run_id);
     if (!r || r.actor_type !== "agent" || r.actor_id !== _a.id) throw new ToolError(`run ${run_id} 없음 (내가 요청한 실행만 조회 가능)`);
@@ -195,6 +251,14 @@ export const TOOLS: Tool[] = [
     }
   }),
 ];
+
+function graphOut(g: Graph) {
+  return {
+    nodes: g.nodes.map((n) => ({ ref: n.key, display_id: n.displayId, type: n.type, title: n.title, status: n.status?.label ?? null })),
+    edges: g.edges.map((e) => ({ from: e.from, to: e.to, link_type: e.linkType, label: e.label, source: e.source, link_id: e.linkId ?? null })),
+    truncated: g.truncated,
+  };
+}
 
 export const TOOL_MAP = Object.fromEntries(TOOLS.map((t) => [t.name, t]));
 

@@ -22,9 +22,12 @@
 | **정책** | AI 운영 모드(자율/가드/감독/동결) × 위험도 → 즉시 실행 / 승인 대기 / 거부 |
 | **감사** | 사람·에이전트의 모든 실행(실패·거부 포함)을 근거·결정자·결과와 함께 기록 |
 | **신호** | 지연 업무, 미수금, 무응대 리드, 백업·인프라 문제 — 에이전트의 작업 큐이자 사람의 관망 화면 |
+| **이벤트 · 트리거** | 모든 변화가 이벤트로 흐르고, 트리거가 AI 를 깨우거나 웹훅을 호출 (신호·승인 요청·cron) |
+| **AI 런타임** | Claude · OpenAI · Gemini · OpenRouter · Ollama/LM Studio · 로컬 CLI 에이전트가 같은 관문으로 일한다 |
+| **그래프** | 외래키·사용자 정의 링크·에이전트 변경 관계를 하나의 그래프로 탐색, Neo4j 분석 복제본 |
 | **IaC** | OpenTofu 로 로컬 Docker 배포, `iac:audit` 로 현행 감사·드리프트 감시 |
 
-설계 상세: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · 에이전트 연결: [docs/AGENTS.md](docs/AGENTS.md) · 인프라: [infra/README.md](infra/README.md) · 다음 단계: [docs/ROADMAP.md](docs/ROADMAP.md)
+설계: [ARCHITECTURE](docs/ARCHITECTURE.md) · 온톨로지: [ONTOLOGY](docs/ONTOLOGY.md) · 이벤트·AI 런타임: [AUTOMATION](docs/AUTOMATION.md) · 외부 AI 연결: [AGENTS](docs/AGENTS.md) · 인프라: [infra/README](infra/README.md) · 로드맵: [ROADMAP](docs/ROADMAP.md)
 
 ---
 
@@ -61,11 +64,13 @@ npm run iac:audit                    # 현행 감사 → 콘솔 /system (cron �
 
 | 화면 | 역할 |
 |---|---|
+| 그래프 `/graph` · 스키마 `/ontology` | 힘 기반 그래프(이웃·경로·필터) + 상세 열, 객체 유형·속성·링크 유형 |
+| AI 연결 `/ai` · 트리거 `/automations` · 이벤트 `/events` | 프로필·지시·세션 기록, 외부 AI 접속 가이드 · 트리거와 실행 · 실시간 이벤트(SSE) |
 | 오퍼레이션 `/` | 상태 스트립 · 신호 큐(제안 액션) · 승인 대기 · 에이전트 · 실시간 활동 · 24h 추이 |
 | 승인함 `/inbox` | 에이전트 요청의 근거·변경 내용(현재→제안) 확인 후 승인/거절 |
 | 활동 로그 `/activity` | 행위자·상태·액션별 감사 로그, 실행 상세(입력·결과) |
 | 일정 `/schedule` | 14일 타임라인 · 지연/오늘/7일/이후 |
-| 객체 탐색 `/o/{type}` · 객체 `/o/{type}/{id}` | 속성 · 연결 · 상태별 가능한 액션 · 변경 이력 |
+| 객체 탐색 `/o/{type}` · 객체 `/o/{type}/{id}` | **열 기반**: 목록 │ 선택 객체 │ 연결 객체 (경계를 끌어 너비 조정) · 관계 그래프 · 변경 이력 |
 | 재무 `/finance` | 통화별 월 손익 · 미수금 에이징 · 이번 달 지출 |
 | 에이전트 `/agents` | AI 운영 모드 · 등록/정지/폐기 · 연결 방법 |
 | 액션 카탈로그 `/actions` | 모든 액션과 현재 모드에서 AI 실행 결과 |
@@ -81,6 +86,9 @@ npm run iac:audit                    # 현행 감사 → 콘솔 /system (cron �
 | `npm run db:seed` · `db:reset -- --yes` · `db:backup` | 데이터 |
 | `npm run agent -- create/list/suspend/resume/revoke` | 에이전트 |
 | `npm run mcp` | MCP stdio 서버 (`NOW_AGENT_TOKEN` 필요) |
+| `npm run worker` | 이벤트 워커 단독 실행 (`-- --once`) |
+| `node bin/now.mjs …` | 에이전트용 CLI (`NOW_URL`, `NOW_AGENT_TOKEN`) |
+| `npm run graph:neo4j` | Neo4j 로 그래프 동기화 / `-- --cypher 파일` |
 | `npm run iac:build` · `iac:audit` | 인프라 |
 
 ## 보안 모델 (로컬 단일 운영자)

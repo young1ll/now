@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { DB } from "@/lib/db";
+import { agentIdForSessionToken } from "./ai";
 
 export const AGENT_STATUSES = ["active", "suspended", "revoked"] as const;
 export type AgentStatus = (typeof AGENT_STATUSES)[number];
@@ -38,7 +39,12 @@ export function createAgent(db: DB, input: { name: string; description?: string 
 /** 토큰으로 활성 에이전트를 찾고 last_seen 을 갱신한다. 정지·폐기된 에이전트는 undefined. */
 export function authenticateAgent(db: DB, token: string | null | undefined): Agent | undefined {
   if (!token) return undefined;
-  const a = db.prepare("SELECT * FROM agents WHERE token_hash = ?").get(hash(token)) as Agent | undefined;
+  let a = db.prepare("SELECT * FROM agents WHERE token_hash = ?").get(hash(token)) as Agent | undefined;
+  if (!a && token.startsWith("nows_")) {
+    // AI 런타임이 로컬 CLI 에이전트에 발급한 단기 토큰
+    const id = agentIdForSessionToken(db, token);
+    a = id ? getAgent(db, id) : undefined;
+  }
   if (!a) return undefined;
   db.prepare("UPDATE agents SET last_seen_at = ? WHERE id = ?").run(new Date().toISOString(), a.id);
   return a;

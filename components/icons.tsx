@@ -29,6 +29,12 @@ const P: Record<string, string> = {
   shield: "M8 1l6 2v5c0 4-3 6-6 7-3-1-6-3-6-7V3z",
   bolt: "M9 1L3 9h5l-1 6 6-8H8z",
   print: "M4 6V1h8v5M4 12H1V6h14v6h-3M4 9h8v6H4z",
+  graph: "M4 4h3v3H4zM10 2h3v3h-3zM10 10h3v3h-3zM2 11h3v3H2zM7 5.5l3-2M6.5 7l4 4M5 12.5h5",
+  schema: "M2 2h5v4H2zM9 10h5v4H9zM9 2h5v4H9zM4.5 6v6H9M11.5 6v4",
+  event: "M8 1v3M8 12v3M1 8h3M12 8h3M8 11a3 3 0 100-6 3 3 0 000 6z",
+  trigger: "M2 8h4l2-5 2 10 2-5h2M14 3v2M14 11v2",
+  ai: "M8 1l1.5 4.5L14 7l-4.5 1.5L8 13l-1.5-4.5L2 7l4.5-1.5z",
+  columns: "M1 2h14v12H1zM6 2v12M11 2v12",
 };
 
 export type IconName = keyof typeof P;

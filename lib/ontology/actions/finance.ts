@@ -9,6 +9,7 @@ import {
 import type { DB } from "@/lib/db";
 import { defineAction } from "../action";
 import { f } from "../fields";
+import { deleteLinksFor } from "../graph";
 import { displayId } from "../ids";
 import { ActionError } from "../types";
 import { checkClient, must, toMinor } from "./util";
@@ -142,6 +143,7 @@ export const financeActions = [
       const d = must(getInvoice(db, i.id), "청구서");
       const label = invoiceLabel(db, i.id);
       deleteInvoice(db, i.id);
+      deleteLinksFor(db, { type: "invoice", id: i.id });
       return { summary: `${label} 삭제`, refs: [], data: { deleted: d } };
     },
   }),
@@ -231,6 +233,7 @@ export const financeActions = [
     run({ db }, i) {
       const e = must(db.prepare("SELECT * FROM expenses WHERE id = ?").get(i.id) as { description: string } | undefined, "지출");
       deleteExpense(db, i.id);
+      deleteLinksFor(db, { type: "expense", id: i.id });
       return { summary: `지출 ${displayId("expense", i.id)} '${e.description}' 삭제`, refs: [], data: { deleted: e } };
     },
   }),

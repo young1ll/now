@@ -34,6 +34,10 @@ export function parseActionForm(def: AnyAction, fd: FormData): Record<string, un
       case "month":
         out[key] = v === "" ? (nullable ? null : undefined) : v;
         break;
+      case "choice":
+        out[key] = v === "" ? undefined : field.spec.optionsFrom === "ai_profiles" ? Number(v) : v;
+        break;
+      case "objref":
       case "enum":
       case "money":
         out[key] = v === "" ? undefined : v;

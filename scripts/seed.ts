@@ -86,6 +86,34 @@ d.transaction(() => {
   A("payment.record", { invoice_id: hanbitNow, amount: 1_320_000, method: "계좌이체" }, "은행 알림 문자: 한빛상사 1,320,000원 입금");
   A("expense.record", { business_id: saas, category: "인프라", description: "AWS (이번 달 청구서)", amount: 431.2 }, "AWS 청구 메일 금액");
   A("task.delete", { id: 3 }, "주간 지표 리뷰는 대시보드 자동화로 대체되어 불필요");
+
+  // ── 온톨로지 링크 (사용자 정의 관계) ──────────────
+  H("link.create", { from: `client:${cafe}`, link_type: "referred_by", to: `client:${hanbit}`, note: "한빛상사 대표 소개" });
+  H("link.create", { from: "task:2", link_type: "depends_on", to: "task:5" });
+  H("link.create", { from: "note:1", link_type: "documents", to: "task:2" });
+  A("link.create", { from: `invoice:${draft}`, link_type: "cites", to: "note:3" }, "견적 근거 문서 연결");
+
+  // ── AI 런타임 · 트리거 ────────────────────────────
+  const ops = H("ai_profile.create", {
+    name: "운영 Claude",
+    provider: "anthropic",
+    system_prompt: "담당: 한결 세무사무소 · Ledgerly 일상 운영. 고객에게 나가는 행동은 반드시 승인 요청으로.",
+    max_steps: 12,
+  }).result!.data as { profile_id: number };
+  H("ai_profile.create", { name: "로컬 Qwen (Ollama)", provider: "ollama", model: "qwen3", max_steps: 8 });
+  H("ai_profile.create", { name: "Claude Code (로컬 CLI)", provider: "command", command: "claude -p --mcp-config .mcp.json --allowedTools 'mcp__now__*'", max_steps: 1 });
+  H("trigger.create", {
+    name: "심각 신호 → 운영 AI",
+    kind: "event",
+    event_pattern: "signal.raised,signal.escalated",
+    filter: '{"payload.severity": "critical"}',
+    target: "agent",
+    profile_id: ops.profile_id,
+    prompt_template: "심각 신호가 발생했다: {{event.payload.title}} ({{event.payload.kind}}).\n제안 액션: {{event.payload.suggested}}\n원인을 get_object 로 확인하고 필요한 조치를 하라.",
+    cooldown_sec: 300,
+  });
+  H("trigger.create", { name: "평일 아침 브리핑", kind: "schedule", schedule: "45 7 * * 1-5", target: "agent", profile_id: ops.profile_id, prompt_template: "오늘의 운영 브리핑: get_overview 와 list_signals 로 현황을 정리하고, 오늘 할 일을 note.create 로 '오늘의 브리핑' 문서로 남겨라." });
+  H("trigger.create", { name: "승인 요청 → Slack", kind: "event", event_pattern: "action.pending", target: "webhook", webhook_url: "https://hooks.slack.com/services/…", secret_env: "SLACK_WEBHOOK_SECRET", enabled: false });
 })();
 
 // 최근 24시간에 에이전트 활동이 분포하도록 시각을 흩뜨린다 (예시 데이터 전용)

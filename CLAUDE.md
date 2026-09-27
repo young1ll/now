@@ -16,6 +16,17 @@ AI 가 운영하고 사람이 관망·개입하는 1인 사업 운영 체제. Ne
 - 읽기는 `lib/repos/*` (첫 인자 `db: DB`). 화면은 서버 컴포넌트에서 `db()` 로 호출.
 - Next 16: `params`·`searchParams`·`cookies()`·`headers()` 는 Promise. `"use server"` 파일은 async 함수만 export.
 
+## 이벤트 · AI
+- 이벤트는 `action_runs` 기록 시 자동 발행 (`lib/repos/runs.ts`). 새 이벤트 유형은 `emitEvent` 로 — 비밀값 금지.
+- 워커(`lib/events/worker.ts`)는 멱등이어야 한다: 점유는 조건부 UPDATE, 커서 전진은 트랜잭션.
+- AI 공급자 추가 = `lib/ai/*` 어댑터(`ChatAdapter`) + `PROVIDER_INFO`. Claude 는 공식 SDK 로만. 키는 환경변수 이름만 저장.
+- 에이전트 도구 추가 = `lib/agent/tools.ts` 한 곳 → MCP · REST(`/api/v1/tools/{name}`) · OpenAPI · CLI 에 자동 노출.
+
+## 온톨로지
+- 관계는 `lib/ontology/schema.ts` (외래키·파생) + `link_types`/`links` (사용자 정의). 객체 삭제 액션은 `deleteLinksFor` 호출.
+- 그래프 질의는 `lib/ontology/graph.ts`. 노드 색은 `lib/ontology/palette.ts` (dataviz 검증값 — 임의 변경 금지).
+- 서버 컴포넌트에서 `"use client"` 모듈의 상수를 import 하지 않는다 (클라이언트 참조가 된다).
+
 ## 데이터
 - 스키마 변경은 `lib/db/migrations.ts` 배열 **끝에 추가**. 기존 항목 수정 금지.
 - 금액: 통화 최소 단위 정수 (`lib/money.ts`). 다른 통화는 합산하지 않는다. 날짜 `YYYY-MM-DD`.
@@ -25,6 +36,7 @@ AI 가 운영하고 사람이 관망·개입하는 1인 사업 운영 체제. Ne
 ## UI (디자인 시스템)
 - 모서리 0 (`rounded` 금지), 토큰 색만 (`bg-panel`, `text-fg-3`, `border-line`, intent: primary/success/warning/danger/ai).
 - 공용 컴포넌트: `components/ui` (PageHeader, Panel, Tag, Metric, ObjectLink, PropertyList …), `ActionForm`, `ActionDrawer`, `runs.tsx`.
+- 열 기반 화면은 `Columns`(grow 열 지정, 너비 기억) + `Column`, 객체 요약은 `ObjectPreview`.
 - 식별자·수치는 `mono`. 에이전트 행위자는 `ai` 색.
 
 ## 인프라

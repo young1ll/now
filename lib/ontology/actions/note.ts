@@ -1,6 +1,7 @@
 import { createNote, deleteNote, getNote, updateNote } from "@/lib/repos/notes";
 import { defineAction } from "../action";
 import { f } from "../fields";
+import { deleteLinksFor } from "../graph";
 import { displayId } from "../ids";
 import { checkBusiness, checkClient, merge, must, normTags } from "./util";
 
@@ -69,6 +70,7 @@ export const noteActions = [
     run({ db }, i) {
       const n = must(getNote(db, i.id), "문서");
       deleteNote(db, i.id);
+      deleteLinksFor(db, { type: "note", id: i.id });
       return { summary: `문서 ${displayId("note", i.id)} '${n.title}' 삭제`, refs: [], data: { deleted: n } };
     },
   }),

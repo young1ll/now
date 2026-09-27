@@ -4,7 +4,7 @@ import path from "node:path";
 import { type DB, dbPath } from "@/lib/db";
 import { migrations } from "@/lib/db/migrations";
 
-export const APP_VERSION = "0.2.0";
+export const APP_VERSION = "0.3.0";
 const startedAt = new Date().toISOString();
 
 export type BackupInfo = { file: string; at: string; bytes: number };

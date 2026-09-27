@@ -46,6 +46,8 @@ export function Shell({ data, children }: { data: ShellData; children: ReactNode
         { href: "/o/expense", label: "지출", icon: "expense" },
         { href: "/o/note", label: "지식 · 문서", icon: "note" },
         { href: "/o/business", label: "사업", icon: "business" },
+        { href: "/graph", label: "그래프", icon: "graph" },
+        { href: "/ontology", label: "스키마", icon: "schema" },
       ],
     },
     {
@@ -53,8 +55,11 @@ export function Shell({ data, children }: { data: ShellData; children: ReactNode
       items: [{ href: "/finance", label: "재무 · 정산", icon: "finance" }],
     },
     {
-      label: "자동화 · 거버넌스",
+      label: "자동화 · AI",
       items: [
+        { href: "/ai", label: "AI 연결", icon: "ai" },
+        { href: "/automations", label: "트리거", icon: "trigger" },
+        { href: "/events", label: "이벤트", icon: "event" },
         { href: "/agents", label: "에이전트", icon: "agent" },
         { href: "/actions", label: "액션 카탈로그", icon: "action" },
         { href: "/system", label: "시스템 · 인프라", icon: "system" },

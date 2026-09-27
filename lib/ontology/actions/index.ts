@@ -1,5 +1,7 @@
 import type { AnyAction } from "../action";
 import { businessActions } from "./business";
+import { automationActions } from "./automation";
+import { linkActions } from "./link";
 import { clientActions } from "./client";
 import { financeActions } from "./finance";
 import { noteActions } from "./note";
@@ -13,6 +15,8 @@ export const ACTION_LIST: AnyAction[] = [
   ...taskActions,
   ...financeActions,
   ...noteActions,
+  ...linkActions,
+  ...automationActions,
   ...systemActions,
 ];
 

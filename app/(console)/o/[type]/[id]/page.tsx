@@ -5,7 +5,9 @@ import { ActionDrawer, actHref } from "@/components/ActionDrawer";
 import { ActionForm } from "@/components/ActionForm";
 import { ConfirmButton } from "@/components/ConfirmButton";
 import { Icon } from "@/components/icons";
+import { GraphCanvas } from "@/components/GraphCanvas";
 import { Markdown } from "@/components/Markdown";
+import { neighborhood } from "@/lib/ontology/graph";
 import { RunTable } from "@/components/runs";
 import { Empty, OBJECT_ICON, ObjectLink, PageHeader, Panel, PropertyList, Tag } from "@/components/ui";
 import { currentScope } from "@/lib/context";
@@ -28,6 +30,7 @@ function contextParams(a: AnyAction, type: ObjectType, obj: ObjectDetail) {
   const fixed: Record<string, unknown> = {};
   const soft: Record<string, unknown> = {};
   if (a.target?.type === type) fixed[a.target.param] = obj.ref.id;
+  else if (a.name === "link.create") fixed.from = `${type}:${obj.ref.id}`;
   else {
     for (const [k, f] of Object.entries(a.fields)) {
       if (f.spec.kind === "ref" && f.spec.ref === type) fixed[k] = obj.ref.id;
@@ -49,7 +52,8 @@ export default async function ObjectPage({ params, searchParams }: { params: Pro
   const path = `/o/${def.type}/${id}`;
   const history = listRuns(db(), { object: { type: def.type, id }, limit: 50 });
   const pending = history.filter((r) => r.status === "pending");
-  const actions = (def.actionsFor?.(obj.raw) ?? def.actions).map((n) => getAction(n)).filter((a): a is AnyAction => !!a);
+  const actions = [...(def.actionsFor?.(obj.raw) ?? def.actions), "link.create"].map((n) => getAction(n)).filter((a): a is AnyAction => !!a);
+  const graph = neighborhood(db(), { type: def.type, id }, { depth: 2, limit: 60 });
   const linkGroups = Object.entries(Object.groupBy(obj.links, (l) => l.relation.split(" · ")[0]));
 
   return (
@@ -97,6 +101,11 @@ export default async function ObjectPage({ params, searchParams }: { params: Pro
                   </Link>
                 );
               })}
+            </div>
+          </Panel>
+          <Panel title="관계 그래프 · 2단계" flush action={<Link href={`/graph?focus=${def.type}:${id}&sel=${def.type}:${id}`} className="btn-minimal btn-sm">그래프에서 열기 <Icon name="arrow" size={10} /></Link>}>
+            <div className="h-[320px]">
+              <GraphCanvas nodes={graph.nodes.map((n) => ({ key: n.key, type: n.type, displayId: n.displayId, title: n.title, status: n.status?.label }))} edges={graph.edges.map((e) => ({ key: e.key, from: e.from, to: e.to, label: e.label, source: e.source }))} selected={`${def.type}:${id}`} focus={`${def.type}:${id}`} navigate minHeight={320} />
             </div>
           </Panel>
           <Panel title="연결된 객체" count={obj.links.length}>

@@ -1,6 +1,6 @@
 {
   "name": "now",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "1인 사업가를 위한 로컬 사업 운영 체제 (Business OS)",
   "scripts": {
@@ -15,10 +15,15 @@
     "mcp": "tsx scripts/mcp-stdio.ts",
     "agent": "tsx scripts/agent.ts",
     "iac:audit": "tsx scripts/iac-audit.ts",
-    "iac:build": "docker build -t now:local ."
+    "iac:build": "docker build -t now:local .",
+    "worker": "tsx scripts/worker.ts",
+    "graph:neo4j": "tsx scripts/neo4j-sync.ts",
+    "now": "node bin/now.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.128.0",
     "better-sqlite3": "^13.0.3",
+    "d3-force": "^3.0.0",
     "next": "^16.3.6",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
@@ -28,6 +33,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
     "@types/better-sqlite3": "^9.6.0",
+    "@types/d3-force": "^3.0.10",
     "@types/node": "^22.20.4",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
@@ -35,5 +41,8 @@
     "tailwindcss": "^4.3.3",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3"
+  },
+  "bin": {
+    "now": "bin/now.mjs"
   }
 }

@@ -15,7 +15,9 @@ export type FieldKind =
   | "ref"
   | "boolean"
   | "tags"
-  | "items";
+  | "items"
+  | "objref"
+  | "choice";
 
 export type FieldSpec = {
   kind: FieldKind;
@@ -27,6 +29,9 @@ export type FieldSpec = {
   options?: { value: string; label: string }[];
   ref?: ObjectType;
   placeholder?: string;
+  /** objref: 허용 유형 (비우면 전체) · choice: 옵션 공급원 */
+  refTypes?: ObjectType[];
+  optionsFrom?: "link_types" | "ai_profiles";
 };
 
 export type Field<T = unknown> = { schema: z.ZodType<T>; spec: FieldSpec };
@@ -102,6 +107,21 @@ export const f = {
   },
   tags(label: string, o: Opts = {}) {
     return make(z.string().max(500), { kind: "tags", label, required: !!o.required, help: o.help ?? "쉼표로 구분" });
+  },
+  /** 임의 객체 참조: "client:3" 또는 "CLT-0003" */
+  objref(label: string, o: Opts & { types?: ObjectType[] } = {}) {
+    return make(z.string().trim().regex(/^([a-z]+:\d+|[A-Za-z]{3}-\d+)$/, "객체 참조 형식: client:3 또는 CLT-0003"), {
+      kind: "objref",
+      label,
+      required: !!o.required,
+      refTypes: o.types,
+      help: o.help ?? "객체 참조 — \"client:3\" 또는 \"CLT-0003\"",
+    });
+  },
+  /** DB 에서 옵션을 읽는 선택 (링크 유형 등). 검증은 액션 run 에서. */
+  choice(label: string, from: "link_types" | "ai_profiles", o: Opts = {}) {
+    const base = from === "ai_profiles" ? z.number().int().positive() : z.string().trim().min(1);
+    return make(base as z.ZodType<string | number>, { kind: "choice", label, required: !!o.required, optionsFrom: from, help: o.help });
   },
   items(label: string) {
     const item = z.object({

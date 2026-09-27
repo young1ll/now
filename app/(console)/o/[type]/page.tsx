@@ -1,14 +1,18 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ActionDrawer, actHref } from "@/components/ActionDrawer";
+import { Column, Columns } from "@/components/Columns";
 import { Icon } from "@/components/icons";
-import { Empty, OBJECT_ICON, PageHeader, Panel, Tag } from "@/components/ui";
+import { ObjectPreview } from "@/components/ObjectPreview";
+import { Empty, OBJECT_ICON, PageHeader, Tag } from "@/components/ui";
 import { currentScope } from "@/lib/context";
 import { db } from "@/lib/db";
 import { getAction } from "@/lib/ontology/execute";
+import { parseRef } from "@/lib/ontology/graph";
 import { objectDef } from "@/lib/ontology/objects";
 import { type SearchParams, one } from "@/lib/params";
 
+/** 객체 탐색기 — 열 기반: 목록 | 선택한 객체 | 연결된 객체. 경계를 끌어 너비 조정. */
 export default async function ExplorerPage({ params, searchParams }: { params: Promise<{ type: string }>; searchParams: SearchParams }) {
   const { type } = await params;
   const def = objectDef(type);
@@ -17,19 +21,23 @@ export default async function ExplorerPage({ params, searchParams }: { params: P
   const scope = await currentScope();
   const q = one(sp.q)?.trim() || undefined;
   const status = one(sp.status) || undefined;
+  const sel = Number(one(sp.sel)) || undefined;
+  const sub = one(sp.sub) ? parseRef(one(sp.sub)!) : undefined;
   const all = def.list(db(), scope, q);
   const statuses = [...new Map(all.filter((r) => r.status).map((r) => [r.status!.label, r.status!])).values()];
   const rows = status ? all.filter((r) => r.status?.label === status) : all;
   const path = `/o/${type}`;
   const create = def.createAction ? getAction(def.createAction) : undefined;
-  const qs = (patch: Record<string, string | undefined>) => {
+  const keep = (patch: Record<string, string | undefined>) => {
     const u = new URLSearchParams();
-    for (const [k, v] of Object.entries({ q, status, ...patch })) if (v) u.set(k, v);
-    return `${path}${u.size ? `?${u}` : ""}`;
+    for (const [k, v] of Object.entries({ q, status, sel: sel ? String(sel) : undefined, sub: one(sp.sub), ...patch })) if (v) u.set(k, v);
+    return u;
   };
+  const href = (patch: Record<string, string | undefined>) => `${path}?${keep(patch)}`;
+  const baseQuery = Object.fromEntries(keep({}));
 
   return (
-    <>
+    <div className="flex h-full flex-col">
       <PageHeader
         icon={OBJECT_ICON[def.type]}
         eyebrow="온톨로지 · 객체 탐색"
@@ -37,62 +45,81 @@ export default async function ExplorerPage({ params, searchParams }: { params: P
         meta={def.description}
         error={one(sp.error)}
         actions={
-          create && (
-            <Link href={actHref(path, create.name, {}, { business_id: def.type !== "business" && scope ? scope : undefined })} className="btn-primary">
-              <Icon name="plus" size={12} /> {create.title}
-            </Link>
-          )
+          <>
+            <Link href={`/graph?types=${def.type}`} className="btn"><Icon name="graph" size={12} /> 그래프</Link>
+            {create && (
+              <Link href={actHref(path, create.name, {}, { business_id: def.type !== "business" && scope ? scope : undefined })} className="btn-primary">
+                <Icon name="plus" size={12} /> {create.title}
+              </Link>
+            )}
+          </>
         }
       />
-      <div className="flex flex-wrap items-center gap-2 border-b border-line bg-panel px-5 py-2">
-        <form action={path} className="flex gap-1.5">
-          {status && <input type="hidden" name="status" value={status} />}
-          <input name="q" defaultValue={q} placeholder={`${def.label} 검색`} className="field h-7 min-h-0 w-64" />
-          <button className="btn">검색</button>
-        </form>
-        <div className="flex flex-wrap gap-1">
-          <Link href={qs({ status: undefined })} className={!status ? "btn-primary btn-sm" : "btn btn-sm"}>전체 {all.length}</Link>
-          {statuses.map((s) => (
-            <Link key={s.label} href={qs({ status: s.label })} className={status === s.label ? "btn-primary btn-sm" : "btn btn-sm"}>
-              {s.label} {all.filter((r) => r.status?.label === s.label).length}
-            </Link>
-          ))}
-        </div>
-      </div>
-      <div className="p-px">
-        <Panel flush>
+      <Columns storageKey={`explorer-${type}`} defaults={[520, 0, 460]} grow={1}>
+        <Column
+          title={<>{def.label} <span className="mono bg-raised px-1.5 text-fg-2">{rows.length}</span></>}
+          actions={
+            <form action={path} className="flex gap-1">
+              {status && <input type="hidden" name="status" value={status} />}
+              <input name="q" defaultValue={q} placeholder="검색" className="field h-6 min-h-0 w-40 py-0 text-[12px]" />
+            </form>
+          }
+        >
+          <div className="flex flex-wrap gap-1 border-b border-line-soft px-3 py-1.5">
+            <Link href={href({ status: undefined })} className={!status ? "btn-primary btn-sm" : "btn btn-sm"}>전체 {all.length}</Link>
+            {statuses.map((s) => (
+              <Link key={s.label} href={href({ status: s.label })} className={status === s.label ? "btn-primary btn-sm" : "btn btn-sm"}>
+                {s.label} {all.filter((r) => r.status?.label === s.label).length}
+              </Link>
+            ))}
+          </div>
           {rows.length === 0 ? (
             <Empty icon={OBJECT_ICON[def.type]}>{q ? "검색 결과가 없습니다." : `${def.label}이(가) 없습니다.`}</Empty>
           ) : (
             <table className="grid-table">
               <thead>
                 <tr>
-                  <th className="w-[96px]">ID</th>
+                  <th className="w-[84px]">ID</th>
                   <th>{def.label}</th>
-                  <th className="w-[90px]">상태</th>
-                  {def.columns.map((c) => <th key={c.key} className={c.num ? "text-right" : ""}>{c.label}</th>)}
+                  <th className="w-[80px]">상태</th>
+                  {def.columns.slice(0, sel ? 1 : 4).map((c) => <th key={c.key} className={c.num ? "text-right" : ""}>{c.label}</th>)}
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
-                  <tr key={r.displayId}>
-                    <td><Link href={`${path}/${r.ref.id}`} className="mono text-primary-fg hover:underline">{r.displayId}</Link></td>
-                    <td className="max-w-[360px]">
-                      <Link href={`${path}/${r.ref.id}`} className="block truncate font-medium hover:underline">{r.title}</Link>
-                      {r.subtitle && <div className="truncate text-[11.5px] text-fg-3">{r.subtitle}</div>}
-                    </td>
-                    <td>{r.status ? <Tag tone={r.status.tone}>{r.status.label}</Tag> : <span className="text-fg-4">—</span>}</td>
-                    {def.columns.map((c) => (
-                      <td key={c.key} className={`${c.num ? "num" : ""} ${c.mono ? "mono" : ""} max-w-[220px] truncate`}>{r.props[c.key]}</td>
-                    ))}
-                  </tr>
-                ))}
+                {rows.map((r) => {
+                  const active = r.ref.id === sel;
+                  return (
+                    <tr key={r.displayId} className={active ? "[&>td]:bg-primary/15" : ""}>
+                      <td><Link href={href({ sel: String(r.ref.id), sub: undefined })} className="mono text-primary-fg hover:underline">{r.displayId}</Link></td>
+                      <td className="max-w-[260px]">
+                        <Link href={href({ sel: String(r.ref.id), sub: undefined })} className="block truncate font-medium hover:underline">{r.title}</Link>
+                        {r.subtitle && <div className="truncate text-[11.5px] text-fg-3">{r.subtitle}</div>}
+                      </td>
+                      <td>{r.status ? <Tag tone={r.status.tone}>{r.status.label}</Tag> : <span className="text-fg-4">—</span>}</td>
+                      {def.columns.slice(0, sel ? 1 : 4).map((c) => (
+                        <td key={c.key} className={`${c.num ? "num" : ""} ${c.mono ? "mono" : ""} max-w-[180px] truncate`}>{r.props[c.key]}</td>
+                      ))}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
-        </Panel>
-      </div>
+        </Column>
+        <Column title={sel ? "선택한 객체" : "미리보기"} actions={sel && <Link href={href({ sel: undefined, sub: undefined })} className="btn-minimal btn-sm" aria-label="닫기"><Icon name="close" size={10} /></Link>}>
+          {sel ? (
+            <ObjectPreview r={{ type: def.type, id: sel }} basePath={path} query={baseQuery} openParam="sub" />
+          ) : (
+            <Empty icon="arrow">왼쪽 목록에서 객체를 선택하면 속성·관계·액션을 여기서 봅니다.</Empty>
+          )}
+        </Column>
+        {sub && (
+          <Column title="연결된 객체" actions={<Link href={href({ sub: undefined })} className="btn-minimal btn-sm" aria-label="닫기"><Icon name="close" size={10} /></Link>}>
+            <ObjectPreview r={sub} basePath={path} query={baseQuery} openParam="sub" />
+          </Column>
+        )}
+      </Columns>
       <ActionDrawer sp={sp} path={path} scope={scope} />
-    </>
+    </div>
   );
 }

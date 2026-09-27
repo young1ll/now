@@ -10,6 +10,9 @@ import { displayId } from "@/lib/ontology/ids";
 import { OBJECTS } from "@/lib/ontology/objects";
 import type { ObjectType } from "@/lib/ontology/types";
 import type { Scope } from "@/lib/repos/scope";
+import { customLinkTypes } from "@/lib/ontology/schema";
+import { listProfiles } from "@/lib/repos/ai";
+import { PROVIDER_INFO } from "@/lib/ai/providers";
 
 type Values = Record<string, unknown>;
 
@@ -29,7 +32,7 @@ function Input({ name, spec, value, db, scope, locked }: { name: string; spec: F
       <>
         <input type="hidden" name={name} value={str(value)} />
         <div className="field flex items-center text-fg-2">
-          {spec.kind === "ref" && spec.ref && value ? <span className="mono">{displayId(spec.ref, Number(value))}</span> : str(value) || "—"}
+          {spec.kind === "ref" && spec.ref && value ? <span className="mono">{displayId(spec.ref, Number(value))}</span> : spec.kind === "objref" && value ? <span className="mono">{str(value).replace(/^([a-z]+):(\d+)$/, (_, t, id) => displayId(t as ObjectType, Number(id)))}</span> : str(value) || "—"}
         </div>
       </>
     );
@@ -72,6 +75,33 @@ function Input({ name, spec, value, db, scope, locked }: { name: string; spec: F
           ))}
         </select>
       );
+    case "choice": {
+      const opts =
+        spec.optionsFrom === "link_types"
+          ? customLinkTypes(db).map((l) => ({ value: l.name, label: `${l.label} · ${l.name} (${l.fromType} → ${l.toType})` }))
+          : listProfiles(db).map((p) => ({ value: String(p.id), label: `${p.name} · ${PROVIDER_INFO[p.provider].label}${p.model ? ` · ${p.model}` : ""}` }));
+      return (
+        <select {...common} className="field" defaultValue={str(value)}>
+          {!spec.required && <option value="">—</option>}
+          {opts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      );
+    }
+    case "objref": {
+      const types = spec.refTypes ?? (["client", "task", "invoice", "note", "business", "expense", "agent"] as ObjectType[]);
+      return (
+        <select {...common} className="field" defaultValue={str(value)}>
+          {!spec.required && <option value="">—</option>}
+          {types.map((t) => (
+            <optgroup key={t} label={OBJECTS[t].plural}>
+              {OBJECTS[t].list(db, t === "business" || t === "agent" ? null : scope).map((r) => (
+                <option key={r.displayId} value={`${t}:${r.ref.id}`}>{r.displayId} · {r.title}</option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+      );
+    }
     case "items": {
       const rows = [...((value as { description: string; quantity: number; unit_price: unknown }[] | undefined) ?? [])];
       while (rows.length < ITEM_ROWS) rows.push({ description: "", quantity: 1, unit_price: "" });

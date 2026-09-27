@@ -11,7 +11,7 @@ type Id = string | number | null;
 export type JsonRpcRequest = { jsonrpc: "2.0"; id?: Id; method: string; params?: Record<string, unknown> };
 export type JsonRpcResponse = { jsonrpc: "2.0"; id: Id; result?: unknown; error?: { code: number; message: string } };
 
-const INSTRUCTIONS = `Now — 1인 사업가용 사업 운영 체제.
+export const INSTRUCTIONS = `Now — 1인 사업가용 사업 운영 체제.
 당신은 이 사업의 운영 에이전트다. 사람(운영자)은 콘솔에서 관망하고 필요할 때 개입한다.
 - 시작: get_overview → list_signals 로 할 일을 파악한다.
 - 읽기: search_objects, get_object. 쓰기: run_action (반드시 reason 에 근거를 적는다).

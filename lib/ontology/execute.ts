@@ -78,6 +78,12 @@ export function executeAction(db: DB, req: ExecuteRequest): ExecuteResult {
   }
 
   const target = targetRef(def, input);
+  // 존재하지 않는 대상에 대한 요청은 승인 대기로 보내지 않는다
+  if (target && !getObject(db, target)) {
+    const msg = `대상 ${target.type} ${target.id} 을(를) 찾을 수 없습니다`;
+    if (!isAgent) throw new ActionError(msg);
+    return record({ action: def.name, actor, risk: "low", status: "failed", params: input, reason: req.reason, error: msg });
+  }
   const base = { action: def.name, actor, risk, params: input, reason: req.reason, refs: target ? [target] : [] };
   const decision = decide(db, actor, def, risk);
 

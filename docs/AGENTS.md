@@ -48,6 +48,31 @@ claude mcp add --env NOW_AGENT_TOKEN=now_… now -- npx tsx scripts/mcp-stdio.ts
 }
 ```
 
+### OpenAI Codex CLI (`~/.codex/config.toml`)
+```toml
+[mcp_servers.now]
+command = "npx"
+args = ["tsx", "/절대경로/now/scripts/mcp-stdio.ts"]
+env = { NOW_AGENT_TOKEN = "now_…", NOW_DB_PATH = "/절대경로/now/data/now.db" }
+```
+
+### Gemini CLI (`~/.gemini/settings.json`)
+```json
+{ "mcpServers": { "now": { "httpUrl": "http://localhost:3000/api/mcp", "headers": { "Authorization": "Bearer now_…" } } } }
+```
+
+### MCP 가 없는 AI — `now` CLI (셸)
+```bash
+export NOW_URL=http://localhost:3000 NOW_AGENT_TOKEN=now_…
+node bin/now.mjs --help
+now signals --severity critical --text
+now run task.create '{"business_id":1,"title":"…"}' --reason "…"   # 종료 코드 0 적용 · 10 대기 · 11 실패 · 12 거부
+now events --follow --type signal.
+```
+
+### OpenAPI (GPT Actions 등)
+`GET /api/v1/openapi.json` — 모든 도구가 `POST /api/v1/tools/{name}` 으로 노출된다.
+
 ## 3. 도구
 
 | 도구 | 용도 |
@@ -59,6 +84,8 @@ claude mcp add --env NOW_AGENT_TOKEN=now_… now -- npx tsx scripts/mcp-stdio.ts
 | `list_actions` | 액션 카탈로그 + 입력 JSON Schema (사람 전용 액션 제외) |
 | `run_action` | 실행. `reason` 필수 — 승인자와 감사 로그에 보인다 |
 | `get_run` / `list_my_runs` / `cancel_run` | 승인 대기 결과 확인·철회 |
+| `traverse` / `find_path` | 그래프: 이웃(1~4단계) · 두 객체 사이 관계 경로 |
+| `list_events` | 이벤트 로그 (after_id 로 이어 읽기). 실시간은 SSE `/api/v1/events/stream` |
 
 `run_action` 결과 `status`:
 - `applied` 적용 · `pending` 사람 승인 대기 (get_run 으로 확인) · `failed` 입력/규칙 오류 (error 확인 후 수정) · `denied` 정책 거부 (사람에게 요청)

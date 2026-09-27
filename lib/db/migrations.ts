@@ -229,4 +229,136 @@ export const migrations: string[] = [
     message        TEXT NOT NULL DEFAULT ''
   );
   `,
+
+  /* 3: 이벤트 · 트리거 · AI 런타임 · 온톨로지 링크 */ `
+  -- 이벤트 로그 (outbox). 모든 액션 실행·신호 변화·스케줄이 여기로 들어간다.
+  CREATE TABLE events (
+    id           INTEGER PRIMARY KEY,
+    type         TEXT NOT NULL,
+    actor_type   TEXT,
+    actor_id     TEXT,
+    subject_type TEXT,
+    subject_id   INTEGER,
+    payload      TEXT NOT NULL DEFAULT '{}',
+    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+  CREATE INDEX events_type ON events(type, id);
+
+  -- 신호 상태 (raise/resolve 변화 감지용)
+  CREATE TABLE signal_state (
+    key        TEXT PRIMARY KEY,
+    kind       TEXT NOT NULL,
+    severity   TEXT NOT NULL,
+    title      TEXT NOT NULL,
+    first_seen TEXT NOT NULL,
+    last_seen  TEXT NOT NULL
+  );
+
+  -- AI 실행 프로필: 어떤 공급자·모델로, 어떤 에이전트 신원으로 일하는가
+  CREATE TABLE ai_profiles (
+    id            INTEGER PRIMARY KEY,
+    name          TEXT NOT NULL,
+    provider      TEXT NOT NULL CHECK (provider IN ('anthropic','openai','gemini','openrouter','ollama','openai_compatible','command')),
+    model         TEXT NOT NULL DEFAULT '',
+    base_url      TEXT NOT NULL DEFAULT '',
+    api_key_env   TEXT NOT NULL DEFAULT '',
+    command       TEXT NOT NULL DEFAULT '',
+    system_prompt TEXT NOT NULL DEFAULT '',
+    max_steps     INTEGER NOT NULL DEFAULT 12,
+    agent_id      INTEGER NOT NULL REFERENCES agents(id),
+    enabled       INTEGER NOT NULL DEFAULT 1,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+
+  -- 트리거: 이벤트(패턴) 또는 스케줄(cron) → 웹훅 또는 AI 실행
+  CREATE TABLE triggers (
+    id               INTEGER PRIMARY KEY,
+    name             TEXT NOT NULL,
+    enabled          INTEGER NOT NULL DEFAULT 1,
+    kind             TEXT NOT NULL CHECK (kind IN ('event','schedule')),
+    event_pattern    TEXT NOT NULL DEFAULT '',
+    filter           TEXT NOT NULL DEFAULT '{}',
+    schedule         TEXT NOT NULL DEFAULT '',
+    target           TEXT NOT NULL CHECK (target IN ('webhook','agent')),
+    webhook_url      TEXT NOT NULL DEFAULT '',
+    secret_env       TEXT NOT NULL DEFAULT '',
+    profile_id       INTEGER REFERENCES ai_profiles(id) ON DELETE SET NULL,
+    prompt_template  TEXT NOT NULL DEFAULT '',
+    cooldown_sec     INTEGER NOT NULL DEFAULT 0,
+    last_fired_at    TEXT,
+    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+
+  CREATE TABLE trigger_runs (
+    id             INTEGER PRIMARY KEY,
+    trigger_id     INTEGER NOT NULL REFERENCES triggers(id) ON DELETE CASCADE,
+    event_id       INTEGER REFERENCES events(id),
+    status         TEXT NOT NULL CHECK (status IN ('queued','running','succeeded','failed','skipped')),
+    attempts       INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TEXT,
+    session_id     INTEGER,
+    output         TEXT NOT NULL DEFAULT '',
+    error          TEXT,
+    created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    started_at     TEXT,
+    finished_at    TEXT
+  );
+  CREATE INDEX trigger_runs_status ON trigger_runs(status, next_attempt_at);
+
+  -- AI 세션 (한 번의 에이전트 실행 기록)
+  CREATE TABLE agent_sessions (
+    id           INTEGER PRIMARY KEY,
+    profile_id   INTEGER NOT NULL REFERENCES ai_profiles(id) ON DELETE CASCADE,
+    trigger_run_id INTEGER,
+    status       TEXT NOT NULL CHECK (status IN ('queued','running','succeeded','failed')),
+    prompt       TEXT NOT NULL,
+    transcript   TEXT NOT NULL DEFAULT '[]',
+    final_text   TEXT NOT NULL DEFAULT '',
+    steps        INTEGER NOT NULL DEFAULT 0,
+    tool_calls   INTEGER NOT NULL DEFAULT 0,
+    usage        TEXT NOT NULL DEFAULT '{}',
+    error        TEXT,
+    started_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    finished_at  TEXT
+  );
+
+  -- 단기 에이전트 토큰 (로컬 CLI 에이전트 세션용). 해시만 저장.
+  CREATE TABLE agent_session_tokens (
+    token_hash TEXT PRIMARY KEY,
+    agent_id   INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    expires_at TEXT NOT NULL
+  );
+
+  -- 온톨로지: 사용자 정의 링크 유형과 링크 (1급 관계)
+  CREATE TABLE link_types (
+    name          TEXT PRIMARY KEY,
+    label         TEXT NOT NULL,
+    inverse_label TEXT NOT NULL,
+    from_type     TEXT NOT NULL,
+    to_type       TEXT NOT NULL,
+    cardinality   TEXT NOT NULL DEFAULT 'many' CHECK (cardinality IN ('one','many')),
+    description   TEXT NOT NULL DEFAULT '',
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+
+  CREATE TABLE links (
+    id         INTEGER PRIMARY KEY,
+    link_type  TEXT NOT NULL REFERENCES link_types(name) ON DELETE CASCADE,
+    from_type  TEXT NOT NULL,
+    from_id    INTEGER NOT NULL,
+    to_type    TEXT NOT NULL,
+    to_id      INTEGER NOT NULL,
+    note       TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE (link_type, from_type, from_id, to_type, to_id)
+  );
+  CREATE INDEX links_from ON links(from_type, from_id);
+  CREATE INDEX links_to ON links(to_type, to_id);
+
+  INSERT INTO link_types (name, label, inverse_label, from_type, to_type, cardinality, description) VALUES
+    ('referred_by', '소개자', '소개한 고객', 'client', 'client', 'one', '이 고객을 소개해 준 고객'),
+    ('depends_on', '선행 업무', '후행 업무', 'task', 'task', 'many', '이 업무를 시작하려면 먼저 끝나야 하는 업무'),
+    ('documents', '문서화 대상', '관련 문서', 'note', 'task', 'many', '이 문서가 절차·결과를 설명하는 업무'),
+    ('cites', '근거 문서', '인용됨', 'invoice', 'note', 'many', '청구 근거가 되는 문서(계약·견적)');
+  `,
 ];
