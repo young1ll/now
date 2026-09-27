@@ -12,7 +12,7 @@ function inline(text: string): ReactNode[] {
     const t = m[0];
     const key = out.length;
     if (t.startsWith("**")) out.push(<strong key={key}>{t.slice(2, -2)}</strong>);
-    else if (t.startsWith("`")) out.push(<code key={key} className="rounded bg-zinc-100 px-1 text-[0.9em] dark:bg-zinc-800">{t.slice(1, -1)}</code>);
+    else if (t.startsWith("`")) out.push(<code key={key} className="mono bg-inset px-1 text-[0.92em] text-primary-fg">{t.slice(1, -1)}</code>);
     else {
       const [, label, href] = t.match(/\[([^\]]+)\]\(([^)\s]+)\)/)!;
       const safe = /^(https?:|mailto:|\/)/.test(href) ? href : "#";
@@ -35,18 +35,18 @@ export function Markdown({ source }: { source: string }) {
       const code: string[] = [];
       for (i++; i < lines.length && !lines[i].startsWith("```"); i++) code.push(lines[i]);
       i++;
-      blocks.push(<pre key={key} className="overflow-x-auto rounded-md bg-zinc-100 p-3 text-xs dark:bg-zinc-800"><code>{code.join("\n")}</code></pre>);
+      blocks.push(<pre key={key} className="mono overflow-x-auto border border-line bg-inset p-3 text-[12px]"><code>{code.join("\n")}</code></pre>);
       continue;
     }
     const h = line.match(/^(#{1,3})\s+(.*)/);
     if (h) {
-      const cls = ["text-xl font-semibold mt-6", "text-lg font-semibold mt-5", "font-semibold mt-4"][h[1].length - 1];
+      const cls = ["text-[17px] font-semibold mt-5 border-b border-line pb-1", "text-[14.5px] font-semibold mt-4", "font-semibold mt-3 text-fg-2"][h[1].length - 1];
       blocks.push(<div key={key} role="heading" aria-level={h[1].length} className={cls}>{inline(h[2])}</div>);
       i++;
       continue;
     }
     if (/^(-{3,}|\*{3,})$/.test(line.trim())) {
-      blocks.push(<hr key={key} className="my-4 border-zinc-200 dark:border-zinc-700" />);
+      blocks.push(<hr key={key} className="my-4 border-line" />);
       i++;
       continue;
     }
@@ -59,8 +59,8 @@ export function Markdown({ source }: { source: string }) {
         items.push(
           task ? (
             <li key={i} className="list-none -ml-5 flex gap-2">
-              <input type="checkbox" disabled defaultChecked={task[1] !== " "} className="mt-1" />
-              <span className={task[1] !== " " ? "muted line-through" : ""}>{inline(task[2])}</span>
+              <input type="checkbox" disabled defaultChecked={task[1] !== " "} className="mt-1 accent-primary" />
+              <span className={task[1] !== " " ? "text-fg-4 line-through" : ""}>{inline(task[2])}</span>
             </li>
           ) : (
             <li key={i}>{inline(text)}</li>
@@ -73,7 +73,7 @@ export function Markdown({ source }: { source: string }) {
     if (line.startsWith(">")) {
       const quote: string[] = [];
       for (; i < lines.length && lines[i].startsWith(">"); i++) quote.push(lines[i].replace(/^>\s?/, ""));
-      blocks.push(<blockquote key={key} className="muted border-l-2 border-zinc-300 pl-3 dark:border-zinc-600">{inline(quote.join(" "))}</blockquote>);
+      blocks.push(<blockquote key={key} className="border-l-2 border-line-strong pl-3 text-fg-2">{inline(quote.join(" "))}</blockquote>);
       continue;
     }
     if (!line.trim()) {
@@ -84,5 +84,5 @@ export function Markdown({ source }: { source: string }) {
     for (; i < lines.length && lines[i].trim() && !/^(#{1,3}\s|```|>|\s*([-*]|\d+\.)\s)/.test(lines[i]); i++) para.push(lines[i]);
     blocks.push(<p key={key}>{inline(para.join(" "))}</p>);
   }
-  return <div className="space-y-3 text-sm leading-relaxed">{blocks}</div>;
+  return <div className="space-y-2.5 text-[13px] leading-relaxed">{blocks}</div>;
 }

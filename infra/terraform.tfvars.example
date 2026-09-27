@@ -1,0 +1,5 @@
+# cp terraform.tfvars.example terraform.tfvars
+# port          = 3000
+# bind_ip       = "127.0.0.1"
+# operator_name = "운영자"
+# image         = "now:local"

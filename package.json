@@ -1,6 +1,6 @@
 {
   "name": "now",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "1인 사업가를 위한 로컬 사업 운영 체제 (Business OS)",
   "scripts": {
@@ -11,7 +11,11 @@
     "test": "node --import tsx --test tests/*.test.ts",
     "db:seed": "tsx scripts/seed.ts",
     "db:reset": "tsx scripts/reset.ts",
-    "db:backup": "tsx scripts/backup.ts"
+    "db:backup": "tsx scripts/backup.ts",
+    "mcp": "tsx scripts/mcp-stdio.ts",
+    "agent": "tsx scripts/agent.ts",
+    "iac:audit": "tsx scripts/iac-audit.ts",
+    "iac:build": "docker build -t now:local ."
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",

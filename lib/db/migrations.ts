@@ -163,4 +163,70 @@ export const migrations: string[] = [
     UNIQUE (connection_id, month)
   );
   `,
+
+  /* 2: AI 운영 계층 — 액션 감사, 에이전트, 설정, IaC 스냅샷. 인프라 가시성(v0.1) 폐지 */ `
+  DROP TABLE infra_checks;
+  DROP TABLE infra_costs;
+  DROP TABLE infra_connections;
+
+  CREATE TABLE settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+  INSERT INTO settings (key, value) VALUES ('ai_mode', 'guarded');
+
+  -- 외부 AI 에이전트. 토큰은 SHA-256 해시만 저장한다.
+  CREATE TABLE agents (
+    id           INTEGER PRIMARY KEY,
+    name         TEXT NOT NULL,
+    description  TEXT NOT NULL DEFAULT '',
+    token_hash   TEXT NOT NULL UNIQUE,
+    token_prefix TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','suspended','revoked')),
+    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    last_seen_at TEXT
+  );
+
+  -- 모든 변경은 액션 실행(run)으로 기록된다. 사람·에이전트·시스템 공통.
+  CREATE TABLE action_runs (
+    id            INTEGER PRIMARY KEY,
+    action        TEXT NOT NULL,
+    actor_type    TEXT NOT NULL CHECK (actor_type IN ('human','agent','system')),
+    actor_id      TEXT NOT NULL,
+    actor_name    TEXT NOT NULL,
+    risk          TEXT NOT NULL CHECK (risk IN ('low','high')),
+    status        TEXT NOT NULL CHECK (status IN ('applied','pending','rejected','failed','denied','cancelled')),
+    params        TEXT NOT NULL,
+    reason        TEXT NOT NULL DEFAULT '',
+    result        TEXT,
+    error         TEXT,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    decided_at    TEXT,
+    decided_by    TEXT,
+    decision_note TEXT NOT NULL DEFAULT ''
+  );
+  CREATE INDEX action_runs_status ON action_runs(status, created_at);
+  CREATE INDEX action_runs_actor ON action_runs(actor_type, actor_id, created_at);
+
+  CREATE TABLE action_run_refs (
+    run_id      INTEGER NOT NULL REFERENCES action_runs(id) ON DELETE CASCADE,
+    object_type TEXT NOT NULL,
+    object_id   INTEGER NOT NULL,
+    PRIMARY KEY (run_id, object_type, object_id)
+  );
+  CREATE INDEX action_run_refs_object ON action_run_refs(object_type, object_id);
+
+  -- IaC 현행 감사 결과 (npm run iac:audit 이 기록)
+  CREATE TABLE infra_snapshots (
+    id             INTEGER PRIMARY KEY,
+    captured_at    TEXT NOT NULL,
+    tool           TEXT NOT NULL,
+    status         TEXT NOT NULL CHECK (status IN ('in_sync','drift','error')),
+    resource_count INTEGER NOT NULL DEFAULT 0,
+    change_count   INTEGER NOT NULL DEFAULT 0,
+    resources      TEXT NOT NULL DEFAULT '[]',
+    changes        TEXT NOT NULL DEFAULT '[]',
+    message        TEXT NOT NULL DEFAULT ''
+  );
+  `,
 ];

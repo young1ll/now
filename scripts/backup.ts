@@ -1,16 +1,8 @@
-// 실행 중에도 안전한 온라인 백업: npm run db:backup
-import path from "node:path";
-import fs from "node:fs";
-import { db, dbPath } from "@/lib/db";
+// 온라인 백업: npm run db:backup  (콘솔 /system 의 '지금 백업' 과 같은 액션)
+import { db } from "@/lib/db";
+import { executeAction } from "@/lib/ontology/execute";
+import { SYSTEM } from "@/lib/ontology/types";
 
-const dir = path.join(path.dirname(dbPath()), "backups");
-fs.mkdirSync(dir, { recursive: true });
-const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 13);
-const dest = path.join(dir, `now-${stamp}.db`);
-db()
-  .backup(dest)
-  .then(() => console.log(`백업 완료 → ${dest}`))
-  .catch((e) => {
-    console.error("백업 실패:", e);
-    process.exit(1);
-  });
+const r = executeAction(db(), { actor: SYSTEM, action: "system.backup", params: {}, reason: "CLI" });
+console.log(r.status === "applied" ? `백업 완료 → ${r.result?.summary}` : `백업 실패: ${r.error}`);
+process.exit(r.status === "applied" ? 0 : 1);

@@ -1,52 +1,119 @@
 @import "tailwindcss";
 
+/*
+ * Now 디자인 시스템 — Palantir Blueprint 계열 다크 콘솔.
+ * 원칙: 모서리 0 · 1px 경계 · 조밀한 정보 밀도 · 대문자 섹션 라벨 · 식별자·숫자는 모노스페이스
+ * 색은 의미(intent)에만 쓴다: primary(행동) / success / warning / danger / ai(에이전트 행위자)
+ */
 @theme {
-  --font-sans: "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
+  --font-sans: "Inter", "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", "SF Mono", Menlo, Consolas, "D2Coding", monospace;
+
+  /* surfaces (dark-gray 스케일) */
+  --color-void: #0d0f12;
+  --color-inset: #111418;
+  --color-canvas: #1c2127;
+  --color-panel: #252a31;
+  --color-raised: #2f343c;
+  --color-hover: #383e47;
+  --color-line: #383e47;
+  --color-line-soft: #2f343c;
+  --color-line-strong: #5f6b7c;
+
+  /* text */
+  --color-fg: #f6f7f9;
+  --color-fg-2: #abb3bf;
+  --color-fg-3: #8f99a8;
+  --color-fg-4: #738091;
+
+  /* intents */
+  --color-primary: #2d72d2;
+  --color-primary-hi: #4c90f0;
+  --color-primary-fg: #8abbff;
+  --color-success: #238551;
+  --color-success-fg: #72ca9b;
+  --color-warning: #c87619;
+  --color-warning-fg: #fbb360;
+  --color-danger: #cd4246;
+  --color-danger-fg: #fa999c;
+  --color-ai: #7961db;
+  --color-ai-fg: #bdadff;
+
+  /* 차트 시리즈 (dataviz 검증 통과: dark surface #252A31) */
+  --color-series-1: #4c90f0;
+  --color-series-2: #c87619;
 }
 
 @layer base {
-  html { color-scheme: light dark; }
-  body { @apply bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100 antialiased; }
-  input, select, textarea { @apply text-sm; }
+  *, *::before, *::after { border-radius: 0 !important; }
+  html { color-scheme: dark; }
+  body {
+    @apply bg-canvas text-fg antialiased;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+  ::selection { background: rgba(45, 114, 210, 0.45); }
+  a { color: inherit; text-decoration: none; }
+  input, select, textarea, button { font: inherit; }
+  :focus-visible { outline: 2px solid var(--color-primary-hi); outline-offset: -1px; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: var(--color-inset); }
+  ::-webkit-scrollbar-thumb { background: var(--color-hover); border: 2px solid var(--color-inset); }
 }
 
-@utility input {
-  @apply w-full rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 outline-none
-    focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20
-    dark:border-zinc-700 dark:bg-zinc-900;
+/* ── 입력 ─────────────────────────────────────────── */
+@utility field {
+  @apply w-full border border-line bg-inset px-2 py-1 text-fg outline-none placeholder:text-fg-4
+    hover:border-line-strong focus:border-primary-hi;
+  min-height: 28px;
 }
+
+/* ── 버튼 ─────────────────────────────────────────── */
 @utility btn {
-  @apply inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-md border border-zinc-300 bg-white
-    px-3 py-1.5 text-sm font-medium whitespace-nowrap hover:bg-zinc-100 disabled:opacity-50
-    dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800;
+  @apply inline-flex cursor-pointer items-center justify-center gap-1.5 border border-line bg-raised px-2.5
+    text-[12px] font-medium whitespace-nowrap text-fg hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40;
+  min-height: 28px;
 }
 @utility btn-primary {
-  @apply btn border-indigo-600 bg-indigo-600 text-white hover:bg-indigo-500
-    dark:border-indigo-500 dark:bg-indigo-600 dark:hover:bg-indigo-500;
+  @apply btn border-primary bg-primary text-white hover:bg-primary-hi;
 }
 @utility btn-danger {
-  @apply btn border-red-300 text-red-700 hover:bg-red-50
-    dark:border-red-900 dark:bg-transparent dark:text-red-400 dark:hover:bg-red-950;
+  @apply btn border-danger/70 bg-danger/15 text-danger-fg hover:bg-danger/30;
+}
+@utility btn-success {
+  @apply btn border-success bg-success text-white hover:bg-success/80;
+}
+@utility btn-minimal {
+  @apply btn border-transparent bg-transparent text-fg-2 hover:bg-raised hover:text-fg;
 }
 @utility btn-sm {
-  @apply px-2 py-0.5 text-xs;
-}
-@utility link {
-  @apply text-indigo-600 hover:underline dark:text-indigo-400;
-}
-@utility muted {
-  @apply text-zinc-500 dark:text-zinc-400;
+  @apply px-1.5 text-[11px];
+  min-height: 22px;
 }
 
+/* ── 텍스트 ───────────────────────────────────────── */
+@utility label-caps {
+  @apply text-[10.5px] font-semibold tracking-[0.08em] text-fg-3 uppercase;
+}
+@utility mono {
+  @apply font-mono text-[12px] tabular-nums;
+}
+@utility link {
+  @apply text-primary-fg hover:underline;
+}
+
+/* ── 표 ───────────────────────────────────────────── */
 @layer components {
-  .table { @apply w-full text-sm; }
-  .table th { @apply border-b border-zinc-200 px-3 py-2 text-left text-xs font-medium text-zinc-500 dark:border-zinc-800; }
-  .table td { @apply border-b border-zinc-100 px-3 py-2 align-top dark:border-zinc-800/60; }
-  .table tr:last-child td { @apply border-b-0; }
+  .grid-table { @apply w-full border-collapse text-[12.5px]; }
+  .grid-table th {
+    @apply sticky top-0 z-[1] border-b border-line bg-panel px-2.5 py-1.5 text-left text-[10.5px] font-semibold tracking-[0.06em] whitespace-nowrap text-fg-3 uppercase;
+  }
+  .grid-table td { @apply border-b border-line-soft px-2.5 py-1.5 align-middle; }
+  .grid-table tbody tr:hover td { @apply bg-raised/60; }
+  .grid-table tr:last-child td { @apply border-b-0; }
+  .grid-table .num { @apply text-right font-mono tabular-nums; }
 }
 
 @media print {
   .no-print { display: none !important; }
-  body { background: white; color: black; }
-  main { padding: 0 !important; }
 }

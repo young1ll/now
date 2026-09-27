@@ -1,12 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { addInteraction, createClient, listClients } from "@/lib/repos/clients";
-import { dashboard } from "@/lib/repos/dashboard";
 import {
   addExpense, addPayment, createInvoice, deletePayment, getInvoice, listInvoices,
   monthlyPnl, receivables, setInvoiceStatus,
 } from "@/lib/repos/finance";
-import { createConnection, listConnections, recordCheck, upsertCost } from "@/lib/repos/infra";
 import { createNote, listNotes, noteTags, updateNote } from "@/lib/repos/notes";
 import { createTask, dueTasks, listTasks, nextDueDate, setTaskStatus } from "@/lib/repos/tasks";
 import { freshDb } from "./helpers";
@@ -151,32 +149,5 @@ describe("지식 · 문서", () => {
     updateNote(db, n2, { business_id: b, client_id: null, title: "릴리스 절차", body: "canary", tags: "운영", pinned: false });
     assert.equal(listNotes(db, null, { q: "deploy" }).length, 0);
     assert.equal(listNotes(db, null, { q: "canary" }).length, 1);
-  });
-});
-
-describe("인프라 · 대시보드", () => {
-  it("최근 점검 상태와 예산 초과를 집계한다", () => {
-    const { db, a } = freshDb();
-    const base = {
-      business_id: a, account_ref: "", region: "", console_url: "", health_url: "",
-      credential_env: "", currency: "USD", memo: "",
-    };
-    const aws = createConnection(db, { ...base, provider: "aws", name: "prod", monthly_budget: 10_000 });
-    const gcp = createConnection(db, { ...base, provider: "gcp", name: "data", monthly_budget: null, business_id: null });
-    recordCheck(db, { connection_id: aws, status: "down", latency_ms: null, message: "", checked_at: "2026-09-27T00:00:00Z" });
-    recordCheck(db, { connection_id: aws, status: "ok", latency_ms: 120, message: "", checked_at: "2026-09-27T01:00:00Z" });
-    recordCheck(db, { connection_id: gcp, status: "degraded", latency_ms: 90, message: "", checked_at: "2026-09-27T01:00:00Z" });
-    upsertCost(db, aws, "2026-09", 8_000);
-    upsertCost(db, aws, "2026-09", 12_500); // 덮어쓰기
-
-    const rows = listConnections(db, a, "2026-09");
-    assert.equal(rows.length, 2); // 공용 연결 포함
-    assert.equal(rows.find((r) => r.id === aws)!.last_status, "ok");
-    assert.equal(rows.find((r) => r.id === aws)!.month_cost, 12_500);
-
-    const d = dashboard(db, a, "2026-09-27");
-    assert.deepEqual(d.infra.counts, { ok: 1, issues: 1, unchecked: 0 });
-    assert.equal(d.infra.overBudget.length, 1);
-    assert.deepEqual(d.infra.cost, [{ currency: "USD", amount: 12_500 }]);
   });
 });

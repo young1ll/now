@@ -1,82 +1,92 @@
-# Now — 1인 사업가를 위한 사업 운영 체제
+# Now — AI 가 운영하고 사람이 관망·개입하는 사업 운영 체제
 
-여러 사업을 동시에 굴리는 1인 창업가가 **고객 · 업무 · 매출 · 지식 · 인프라**를 한 화면에서 운영하기 위한 로컬 웹앱입니다.
-모든 데이터는 내 컴퓨터의 SQLite 파일 하나에 저장되며, 외부 서버나 계정이 필요 없습니다.
+1인 창업가가 여러 사업을 굴리기 위한 **로컬 우선 Business OS**.
+일상 운영(고객 후속 조치, 업무 생성, 청구·정산 준비, 문서화)은 **AI 에이전트가 MCP/REST 로 수행**하고,
+사람은 **콘솔에서 관망하다가 필요할 때 개입**합니다 — 승인·거절, 에이전트 정지, AI 운영 모드 전환.
 
-| 모듈 | 하는 일 |
+```
+            ┌──────────── 사람 (운영자) ────────────┐
+            │  콘솔: 오퍼레이션 · 승인함 · 활동 로그  │  관망 · 개입
+            └───────────────────┬───────────────────┘
+                                │ 같은 관문
+ AI 에이전트 ── MCP / REST ──► 액션(Action) ──► 정책(Policy) ──► 실행 · 승인 대기 · 거부
+                                │                                   │
+                          온톨로지(Ontology)                     감사(Audit)
+               사업 · 고객 · 업무 · 청구서 · 지출 · 문서 · 에이전트    모든 시도 기록
+```
+
+| 계층 | 내용 |
 |---|---|
-| **대시보드** | 이번 달 순이익, 미수금, 마감 임박·지연 업무, 인프라 이상·예산 초과를 한눈에 |
-| **고객 · 거래처** (CRM) | 고객 상태(잠재·진행·보류·종료), 접촉 이력, 고객별 업무·청구서·문서 |
-| **업무 · 마감** | 마감일·우선순위, 반복 업무(매주·매월·분기·매년 — 완료하면 다음 회차 자동 생성) |
-| **매출 · 청구 · 정산** | 청구서(부가세·일련번호·PDF 인쇄), 입금 기록 → 자동 완납 처리, 지출, 월별 손익(현금주의, 통화별) |
-| **지식 · 문서** | SOP·체크리스트·템플릿을 마크다운으로, 전문 검색(FTS5)·태그·공용 문서 |
-| **인프라** | AWS · GCP · Azure · Palantir · HTTP 서비스 연결 등록, 헬스체크, 자격증명 설정 여부, 월 비용 vs 예산 |
+| **온톨로지** | 사업·고객·업무·청구서·지출·문서·에이전트 객체와 연결. 콘솔·API·MCP 가 같은 정의를 읽는다 |
+| **액션** | 데이터를 바꾸는 유일한 경로 (26종). 하나의 정의가 폼 UI · AI 용 JSON Schema · 검증을 동시에 만든다 |
+| **정책** | AI 운영 모드(자율/가드/감독/동결) × 위험도 → 즉시 실행 / 승인 대기 / 거부 |
+| **감사** | 사람·에이전트의 모든 실행(실패·거부 포함)을 근거·결정자·결과와 함께 기록 |
+| **신호** | 지연 업무, 미수금, 무응대 리드, 백업·인프라 문제 — 에이전트의 작업 큐이자 사람의 관망 화면 |
+| **IaC** | OpenTofu 로 로컬 Docker 배포, `iac:audit` 로 현행 감사·드리프트 감시 |
 
-사이드바의 **사업 범위**로 "전체 사업" ↔ 특정 사업을 전환하면 모든 화면이 그 범위로 필터링됩니다.
+설계 상세: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · 에이전트 연결: [docs/AGENTS.md](docs/AGENTS.md) · 인프라: [infra/README.md](infra/README.md) · 다음 단계: [docs/ROADMAP.md](docs/ROADMAP.md)
 
 ---
 
-## 빠른 시작
+## 빠른 시작 (개발 모드)
 
-요구사항: **Node.js 22+**
+요구사항: Node.js 22+
 
 ```bash
 npm install
-npm run db:seed     # (선택) 예시 데이터 — 빈 DB 에서만 실행됨
-npm run dev         # http://localhost:3000
+npm run db:seed      # (선택) 예시 데이터 + 운영 에이전트 토큰 출력
+npm run dev          # http://localhost:3000
 ```
 
-매일 쓸 때는 빌드해서 실행하는 편이 빠릅니다.
+### AI 에이전트 연결 (Claude Code)
 
 ```bash
-npm run build && npm start
+npm run agent -- create "Claude Code (운영)"        # 토큰 발급 (콘솔 /agents 에서도 가능)
+claude mcp add --transport http now http://localhost:3000/api/mcp \
+  --header "Authorization: Bearer now_…"
 ```
 
-처음 실행하면 사업을 하나 등록하는 화면이 나옵니다.
+그다음 Claude 에게: *"get_overview 로 현황을 보고 list_signals 의 신호를 처리해 줘"*.
+고위험 행동은 콘솔 **승인함**에 쌓이고, 사람이 승인하면 실행됩니다.
 
-## 데이터
-
-- 위치: `./data/now.db` (환경변수 `NOW_DB_PATH` 로 변경). `data/` 는 git 에 커밋되지 않습니다.
-- 백업: `npm run db:backup` → `data/backups/now-YYYYMMDD-HHMM.db` (서버 실행 중에도 안전)
-- 초기화: `npm run db:reset -- --yes`
-- 스키마는 앱 시작 시 자동 마이그레이션됩니다 (`lib/db/migrations.ts`).
-
-## 인프라 연동과 비밀값
-
-비밀값(API 키, 토큰)은 **DB 에 저장하지 않습니다.** 연결마다 *환경변수 이름*만 적고, 실제 값은 `.env.local` 에 둡니다.
+## 운영 배포 (IaC)
 
 ```bash
-cp .env.local.example .env.local
-# AWS_PROD_ACCESS_KEY=...
+npm run iac:build                    # 이미지 빌드 (now:local)
+cd infra && tofu init && tofu apply  # 로컬 Docker 에 배포 → http://127.0.0.1:3000
+npm run iac:audit                    # 현행 감사 → 콘솔 /system (cron 권장)
 ```
 
-현재 상태 판정은 두 가지 근거만 사용합니다 — 추측하지 않습니다.
+## 콘솔
 
-1. **헬스체크 URL** 응답: 2xx·3xx 정상 / 4xx 주의 / 5xx·무응답 장애
-2. **자격증명 환경변수** 존재 여부: 없으면 정상 → 주의로 낮춤
+| 화면 | 역할 |
+|---|---|
+| 오퍼레이션 `/` | 상태 스트립 · 신호 큐(제안 액션) · 승인 대기 · 에이전트 · 실시간 활동 · 24h 추이 |
+| 승인함 `/inbox` | 에이전트 요청의 근거·변경 내용(현재→제안) 확인 후 승인/거절 |
+| 활동 로그 `/activity` | 행위자·상태·액션별 감사 로그, 실행 상세(입력·결과) |
+| 일정 `/schedule` | 14일 타임라인 · 지연/오늘/7일/이후 |
+| 객체 탐색 `/o/{type}` · 객체 `/o/{type}/{id}` | 속성 · 연결 · 상태별 가능한 액션 · 변경 이력 |
+| 재무 `/finance` | 통화별 월 손익 · 미수금 에이징 · 이번 달 지출 |
+| 에이전트 `/agents` | AI 운영 모드 · 등록/정지/폐기 · 연결 방법 |
+| 액션 카탈로그 `/actions` | 모든 액션과 현재 모드에서 AI 실행 결과 |
+| 시스템 `/system` | 런타임 · DB · 백업 · IaC 감사/드리프트 |
 
-월 비용은 지금은 수동 입력입니다. 공급자 API(AWS Cost Explorer, GCP Billing, Azure Cost Management, Foundry)로 자동 수집하는 어댑터는 [로드맵](docs/ROADMAP.md)에 있습니다.
+단축키: `/` 검색 · `g o` 오퍼레이션 · `g i` 승인함 · `g a` 활동 · `g s` 일정
 
-## 개발
+## 명령
 
-```bash
-npm test            # 단위·통합 테스트 (node:test, 인메모리 SQLite)
-npm run typecheck
-npm run build
-```
+| 명령 | |
+|---|---|
+| `npm test` · `npm run typecheck` · `npm run build` | 검증 |
+| `npm run db:seed` · `db:reset -- --yes` · `db:backup` | 데이터 |
+| `npm run agent -- create/list/suspend/resume/revoke` | 에이전트 |
+| `npm run mcp` | MCP stdio 서버 (`NOW_AGENT_TOKEN` 필요) |
+| `npm run iac:build` · `iac:audit` | 인프라 |
 
-```
-app/                 화면 (Next.js App Router, 서버 컴포넌트)
-  actions/           서버 액션 — 폼 제출 처리 (모듈별)
-components/          공용 UI
-lib/
-  db/                SQLite 연결 + 마이그레이션
-  repos/             데이터 접근 계층 (모듈별, 순수 함수 + db 인자 → 테스트 용이)
-  infra/             인프라 공급자 정보 · 상태 점검
-  money.ts dates.ts  금액(최소 단위 정수) · 날짜('YYYY-MM-DD') 헬퍼
-scripts/             seed · reset · backup
-tests/               node:test
-docs/ROADMAP.md      다음 단계
-```
+## 보안 모델 (로컬 단일 운영자)
 
-기술 스택: Next.js 16 · React 19 · TypeScript · Tailwind CSS 4 · better-sqlite3
+- 콘솔에는 로그인이 없습니다 → **127.0.0.1 에만 노출** (IaC 기본값). 외부 공개 전 인증 추가 필요 (로드맵).
+- 에이전트는 토큰(SHA-256 해시만 저장)으로 인증, 요청마다 상태 확인 → 정지 즉시 차단.
+- 비밀값은 DB·감사 로그·IaC 스냅샷에 남기지 않습니다 (env 는 키 이름만 기록).
+
+기술 스택: Next.js 16 · React 19 · TypeScript · Tailwind CSS 4 · better-sqlite3 · zod 4 · OpenTofu (kreuzwerker/docker)
