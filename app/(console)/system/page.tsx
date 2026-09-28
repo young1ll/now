@@ -54,7 +54,7 @@ export default async function SystemPage({ searchParams }: { searchParams: Searc
         <Metric label="IaC 상태" value={snap ? SNAP[snap.status].label : "미감사"} sub={snap ? timeAgo(snap.captured_at) : "npm run iac:audit"} tone={!snap ? "warning" : snap.status === "in_sync" ? "success" : "danger"} />
       </div>
 
-      <div className="grid gap-px bg-void p-px xl:grid-cols-12">
+      <div className="grid grid-cols-1 gap-px bg-void p-px xl:grid-cols-12">
         <div className="flex flex-col gap-px xl:col-span-8">
           <Panel
             title="IaC 현행 감사 — 관리 리소스"

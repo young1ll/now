@@ -66,10 +66,24 @@ function eventTouchesTainted(db: DB, e: NonNullable<ReturnType<typeof getEvent>>
   return refs.some((r) => (r.type === "memory" ? !!getMemory(db, r.id)?.tainted : r.type === "note" ? !!getNote(db, r.id)?.tainted : false));
 }
 
+/** 이벤트 대상 객체를 (이벤트 시점까지) 마지막으로 바꾼 적용 run 의 행위자가 에이전트인가 */
+function lastWriterIsAgent(db: DB, e: NonNullable<ReturnType<typeof getEvent>>): boolean {
+  if (!e.subject_type || !e.subject_id || !(OBJECT_TYPES as readonly string[]).includes(e.subject_type)) return false;
+  const actor = db
+    .prepare(
+      `SELECT r.actor_type FROM action_run_refs f JOIN action_runs r ON r.id = f.run_id
+       WHERE f.object_type = ? AND f.object_id = ? AND r.status = 'applied' AND r.created_at <= ? ORDER BY r.id DESC LIMIT 1`,
+    )
+    .pluck()
+    .get(e.subject_type, e.subject_id, e.created_at) as string | undefined;
+  return actor === "agent";
+}
+
 /**
  * 에피소드 오염(tainted) 규칙 — 세션이 무엇으로 시작됐나:
  *  - 사람이 직접 지시(ai.run, 트리거 없음) → 0
  *  - 스케줄(schedule.fired) · 사람의 수동 트리거 실행(manual.fired) · 신호 같은 시스템 이벤트 → 0
+ *    (단 시스템 이벤트의 대상 객체를 마지막으로 쓴 행위자가 에이전트면 → 1: 신호 제목에 그 에이전트가 쓴 텍스트가 담긴다)
  *  - 이벤트 트리거인데 그 이벤트의 행위자가 에이전트 → 1 (다른 에이전트가 쓴 내용이 프롬프트로 들어왔다)
  *  - 이벤트 페이로드·대상이 외부 유래(tainted) 문서·기억을 가리킴 → 1
  *  - 그 밖의 사람 행동 이벤트 → 0
@@ -82,6 +96,8 @@ export function episodeTaint(db: DB, s: AgentSession): { tainted: boolean; reaso
   if (event.type === "schedule.fired" || event.type === "manual.fired") return { tainted: false, reason: `${event.type} — 스케줄·수동 실행` };
   if (event.actor_type === "agent") return { tainted: true, reason: `에이전트가 일으킨 이벤트(${event.type})로 시작` };
   if (eventTouchesTainted(db, event)) return { tainted: true, reason: `외부 출처 문서·기억을 가리키는 이벤트(${event.type})로 시작` };
+  // 시스템 이벤트(신호 등)의 제목·요약은 대상 객체의 내용이다 — 그 객체를 마지막으로 쓴 행위자가 에이전트면 에이전트가 쓴 텍스트가 들어왔다
+  if (event.actor_type !== "human" && lastWriterIsAgent(db, event)) return { tainted: true, reason: `에이전트가 마지막으로 쓴 객체에 대한 시스템 이벤트(${event.type})로 시작` };
   return { tainted: false, reason: `${event.actor_type ?? "시스템"} 이벤트(${event.type})로 시작` };
 }
 
@@ -124,7 +140,7 @@ export function buildEpisode(db: DB, s: AgentSession): EpisodeDraft {
 
   const request = clip(stripUntrusted(s.prompt), REQUEST_CHARS);
   const eventLine = event
-    ? `이벤트: ${event.type}${event.subject_type && event.subject_id && (OBJECT_TYPES as readonly string[]).includes(event.subject_type) ? ` · 대상 ${displayId(event.subject_type as Ref["type"], event.subject_id)}` : ""}${typeof event.payload.title === "string" ? ` · ${oneLine(event.payload.title)}` : ""}`
+    ? `이벤트: ${event.type}${event.subject_type && event.subject_id && (OBJECT_TYPES as readonly string[]).includes(event.subject_type) ? ` · 대상 ${displayId(event.subject_type as Ref["type"], event.subject_id)}` : ""}${typeof event.payload.title === "string" ? ` · 제목(데이터): ${oneLine(event.payload.title).replace(/</g, "＜")}` : ""}`
     : "";
   const result = s.status === "succeeded" ? clip(s.final_text.trim() || "(응답 텍스트 없음)", RESULT_CHARS) : `오류: ${s.error ?? "알 수 없음"}${s.final_text.trim() ? `\n\n${clip(s.final_text.trim(), RESULT_CHARS)}` : ""}`;
 

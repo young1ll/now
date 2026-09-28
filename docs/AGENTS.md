@@ -145,6 +145,8 @@ now run document.import '{"title":"Acme 보안 설문","body":"…","source_uri"
 ```bash
 now context --about CLT-0003 --task "갱신 제안서 작성" --text
 now remember "Acme Robotics 는 청구서에 PO 번호를 요구한다" --kind caution --about CLT-0003 --evidence note:3 --reason "협상 메모에 명시"
+# 메일·웹훅 등 외부 입력에서 알게 된 것은 --tainted (모르는 플래그는 거부된다)
+now remember "Acme Robotics 는 보안 설문 회신을 영어로 받기를 원한다" --kind preference --about CLT-0003 --evidence client:3 --tainted --reason "고객 메일 본문(외부 입력)"
 now memories --status proposed,disputed --text
 now cite 12 15
 ```

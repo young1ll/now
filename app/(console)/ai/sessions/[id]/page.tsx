@@ -7,6 +7,7 @@ import { Markdown } from "@/components/Markdown";
 import { MemoryLink, MemoryStatusTag } from "@/components/memory";
 import { Actor, ObjectLink, PageHeader, Panel, PropertyList, Tag, fmtTime } from "@/components/ui";
 import { PROVIDER_INFO } from "@/lib/ai/providers";
+import { promptHeadline } from "@/lib/events/prompt";
 import { db } from "@/lib/db";
 import { idParam } from "@/lib/params";
 import { getProfile, getSession } from "@/lib/repos/ai";
@@ -41,11 +42,11 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
         icon="ai"
         eyebrow={<Link href="/ai" className="hover:text-fg">AI 세션</Link>}
         title={<span className="flex items-center gap-2">세션 #{s.id} <Tag tone={st.tone}>{st.label}</Tag></span>}
-        meta={s.prompt.split("\n")[0].slice(0, 160)}
+        meta={promptHeadline(s.prompt, s.trigger_run_id ? `트리거 실행 #${s.trigger_run_id}` : undefined).slice(0, 160)}
         live={s.status === "running"}
         actions={episode && <Link href={`/o/note/${episode.id}`} className="btn"><Icon name="note" size={12} /> 에피소드 {displayId("note", episode.id)}</Link>}
       />
-      <div className="grid gap-px bg-void p-px xl:grid-cols-12">
+      <div className="grid grid-cols-1 gap-px bg-void p-px xl:grid-cols-12">
         <div className="xl:col-span-8">
           <Panel title="대화 기록" count={s.transcript.length}>
             <ol className="space-y-3">

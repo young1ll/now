@@ -26,6 +26,12 @@ function pickable(db: DB, type: ObjectType, scope: Scope, current?: number) {
   return rows.filter((r) => r.props.kind_key !== "episode" || r.ref.id === current || ++episodes <= RECENT_EPISODES);
 }
 
+/**
+ * 선택지 상한 — 객체가 수천 개면 <select> 가 화면(HTML)을 수 MB 로 키운다. 넘으면 참조 입력칸 + 자동완성 목록(앞 PICKER_MAX 개)으로
+ * 바꾼다: 목록에 없는 객체는 id(ref) · 식별자(objref: "CLT-0433")로 적는다.
+ */
+const PICKER_MAX = 300;
+
 function refOptions(db: DB, type: ObjectType, scope: Scope, current?: number) {
   return pickable(db, type, type === "business" ? null : scope, current).map((r) => ({ value: r.ref.id, label: `${r.displayId} · ${r.title}` }));
 }
@@ -88,15 +94,27 @@ function Input({ name, spec, value, db, scope, locked }: { name: string; spec: F
           ))}
         </select>
       );
-    case "ref":
+    case "ref": {
+      const opts = refOptions(db, spec.ref!, scope, Number(value) || undefined);
+      if (opts.length > PICKER_MAX) {
+        return (
+          <>
+            <input {...common} className="field mono" list={`dl-${name}`} inputMode="numeric" defaultValue={str(value)} placeholder={`${OBJECTS[spec.ref!].label} id (전체 ${opts.length}개 — 목록은 앞 ${PICKER_MAX}개)`} />
+            <datalist id={`dl-${name}`}>
+              {opts.slice(0, PICKER_MAX).map((o) => <option key={o.value} value={o.value} label={o.label} />)}
+            </datalist>
+          </>
+        );
+      }
       return (
         <select {...common} className="field" defaultValue={str(value)}>
           {(!spec.required || spec.nullable) && <option value="">— 없음 —</option>}
-          {refOptions(db, spec.ref!, scope, Number(value) || undefined).map((o) => (
+          {opts.map((o) => (
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </select>
       );
+    }
     case "choice": {
       const opts =
         spec.optionsFrom === "link_types"
@@ -114,12 +132,25 @@ function Input({ name, spec, value, db, scope, locked }: { name: string; spec: F
       return <input {...common} className="field mono" defaultValue={str(value)} placeholder={spec.placeholder ?? (spec.kind === "ids" ? "12, MEM-0015" : undefined)} />;
     case "objref": {
       const types = spec.refTypes ?? (["client", "task", "invoice", "note", "business", "expense", "agent", "memory"] as ObjectType[]);
+      const groups = types.map((t) => ({ t, rows: pickable(db, t, t === "business" || t === "agent" ? null : scope, t === "note" ? Number(str(value).match(/^note:(\d+)$/)?.[1]) || undefined : undefined) }));
+      const total = groups.reduce((n, g) => n + g.rows.length, 0);
+      if (total > PICKER_MAX) {
+        const per = Math.max(20, Math.floor(PICKER_MAX / types.length));
+        return (
+          <>
+            <input {...common} className="field mono" list={`dl-${name}`} defaultValue={str(value)} placeholder={`객체 참조 — "CLT-0003" 또는 "client:3" (전체 ${total}개)`} />
+            <datalist id={`dl-${name}`}>
+              {groups.flatMap((g) => g.rows.slice(0, per).map((r) => <option key={r.displayId} value={`${g.t}:${r.ref.id}`} label={`${r.displayId} · ${r.title}`} />))}
+            </datalist>
+          </>
+        );
+      }
       return (
         <select {...common} className="field" defaultValue={str(value)}>
           {!spec.required && <option value="">—</option>}
-          {types.map((t) => (
+          {groups.map(({ t, rows }) => (
             <optgroup key={t} label={OBJECTS[t].plural}>
-              {pickable(db, t, t === "business" || t === "agent" ? null : scope, t === "note" ? Number(str(value).match(/^note:(\d+)$/)?.[1]) || undefined : undefined).map((r) => (
+              {rows.map((r) => (
                 <option key={r.displayId} value={`${t}:${r.ref.id}`}>{r.displayId} · {r.title}</option>
               ))}
             </optgroup>

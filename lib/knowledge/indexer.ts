@@ -6,7 +6,7 @@ import { displayId } from "@/lib/ontology/ids";
 import { INTRINSIC_LINKS } from "@/lib/ontology/schema";
 import { OBJECT_TYPES, type ObjectType, type Ref } from "@/lib/ontology/types";
 import { lastEventId } from "@/lib/repos/events";
-import { getSetting, setSetting } from "@/lib/repos/settings";
+import { deleteSetting, getSetting, setSetting } from "@/lib/repos/settings";
 import { INDEXED_TYPES, type OwnerDoc, contentHash, estimateTokens, renderOwners } from "./cards";
 import { redactSecrets } from "./redact";
 
@@ -80,25 +80,121 @@ function mentioning(db: DB, r: Ref): Ref[] {
     .filter((m) => (OBJECT_TYPES as readonly string[]).includes(m.type));
 }
 
-/** 전체 재색인. 바뀐 것만 쓰므로 반복 실행해도 싸다. */
-export function reindexAll(db: DB, now = new Date()): IndexResult {
+/** 소유자 유형 → 테이블 (전체 재색인이 id 를 묶음으로 나눠 읽는다) */
+const OWNER_TABLE: Record<ObjectType, string> = {
+  business: "businesses", client: "clients", task: "tasks", invoice: "invoices", expense: "expenses", note: "notes", agent: "agents", memory: "memories",
+};
+/** 전체 재색인의 묶음 크기 — 묶음마다 커밋한다 (FTS 쓰기가 한 트랜잭션에 쌓이면 묶음마다 느려지고, 쓰기 잠금을 오래 쥔다) */
+const SWEEP_BATCH = 500;
+
+/**
+ * 전체 재색인 단계들 — 묶음 하나(유형별 id SWEEP_BATCH 개)가 자기 트랜잭션이고, 묶음 사이에 yield 한다.
+ * 동기 호출(reindexAll)은 끝까지 돌리고, 워커·요청 경로의 백그라운드 스윕(reindexAllAsync)은 묶음 사이에 이벤트 루프를 내준다.
+ * 중간에 멈춰도 색인은 파생 데이터라 괜찮다 — 스윕 완료 표시(index_swept_at · 형식)는 마지막에 남기므로 다음 호출이 다시 스윕한다.
+ */
+function* sweepSteps(db: DB, now: Date, res: IndexResult): Generator<void, void> {
+  for (const type of INDEXED_TYPES) {
+    const ids = db.prepare(`SELECT id FROM ${OWNER_TABLE[type]} ORDER BY id`).pluck().all() as number[];
+    for (let i = 0; i < ids.length; i += SWEEP_BATCH) {
+      const part = ids.slice(i, i + SWEEP_BATCH);
+      db.transaction(() => {
+        const docs = renderOwners(db, type, part);
+        for (const id of part) {
+          const doc = docs.get(id);
+          if (doc) {
+            res.rendered++;
+            if (writeOwner(db, doc)) res.changed++;
+          } else if (removeOwner(db, { type, id })) res.removed++;
+        }
+      })();
+      yield;
+    }
+    db.transaction(() => {
+      const live = new Set(db.prepare(`SELECT id FROM ${OWNER_TABLE[type]}`).pluck().all() as number[]);
+      const stale = (db.prepare("SELECT DISTINCT owner_id FROM chunks WHERE owner_type = ?").pluck().all(type) as number[]).filter((id) => !live.has(id));
+      for (const id of stale) if (removeOwner(db, { type, id })) res.removed++;
+    })();
+    yield;
+  }
+  db.transaction(() => {
+    // 알 수 없는 소유자 유형(과거 버전·실험 데이터) 정리
+    db.prepare(`DELETE FROM chunks WHERE owner_type NOT IN (${OBJECT_TYPES.map(() => "?").join(",")})`).run(...OBJECT_TYPES);
+    setSetting(db, "index_swept_at", now.toISOString());
+    setSetting(db, FORMAT_KEY, INDEX_FORMAT);
+  })();
+}
+
+/** 일괄 적재 표식 (마이그레이션 12 — 있는 동안 청크 트리거가 FTS 를 건너뛴다). 한 트랜잭션 안에서만 켠다 */
+const BULK_KEY = "index_bulk";
+
+/** 거의 전부를 새로 쓰는 전체 색인인가 — 빈 색인이거나 색인 형식이 바뀌었을 때 */
+const needsBulk = (db: DB) => formatStale(db) || !db.prepare("SELECT 1 FROM chunks LIMIT 1").get();
+
+/**
+ * 일괄 전체 색인: 청크를 FTS 트리거 없이 쓰고 FTS 두 개를 'rebuild' 한 번으로 만든다 — 한 트랜잭션.
+ * 행마다 trigram FTS 에 넣으면 색인이 커질수록 삽입이 느려져(초선형) 수만 청크의 첫 색인이 10분을 넘는다.
+ */
+function bulkReindex(db: DB, now: Date): IndexResult {
   const res: IndexResult = { rendered: 0, changed: 0, removed: 0 };
   db.transaction(() => {
+    setSetting(db, BULK_KEY, "1");
     for (const type of INDEXED_TYPES) {
       const docs = renderOwners(db, type);
       for (const doc of docs.values()) {
         res.rendered++;
         if (writeOwner(db, doc)) res.changed++;
       }
-      const stale = (db.prepare("SELECT DISTINCT owner_id AS id FROM chunks WHERE owner_type = ?").all(type) as { id: number }[]).filter((r) => !docs.has(r.id));
-      for (const r of stale) if (removeOwner(db, { type, id: r.id })) res.removed++;
+      const stale = (db.prepare("SELECT DISTINCT owner_id FROM chunks WHERE owner_type = ?").pluck().all(type) as number[]).filter((id) => !docs.has(id));
+      for (const id of stale) if (removeOwner(db, { type, id })) res.removed++;
     }
-    // 알 수 없는 소유자 유형(과거 버전·실험 데이터) 정리
     db.prepare(`DELETE FROM chunks WHERE owner_type NOT IN (${OBJECT_TYPES.map(() => "?").join(",")})`).run(...OBJECT_TYPES);
+    db.exec("INSERT INTO chunks_fts(chunks_fts) VALUES ('rebuild'); INSERT INTO chunks_words(chunks_words) VALUES ('rebuild');");
+    deleteSetting(db, BULK_KEY);
     setSetting(db, "index_swept_at", now.toISOString());
     setSetting(db, FORMAT_KEY, INDEX_FORMAT);
   })();
   return res;
+}
+
+/**
+ * 전체 재색인 (동기). 빈 색인·형식 변경이면 일괄 적재, 아니면 묶음 스윕 — 바뀐 것만 쓰므로 반복해도 쓰기는 없다
+ * (다만 모든 카드를 다시 렌더한다 — 워커는 reindexAllAsync).
+ */
+export function reindexAll(db: DB, now = new Date()): IndexResult {
+  if (needsBulk(db)) return bulkReindex(db, now);
+  const res: IndexResult = { rendered: 0, changed: 0, removed: 0 };
+  for (const _ of sweepSteps(db, now, res));
+  return res;
+}
+
+const yieldLoop = () => new Promise<void>((r) => setImmediate(r));
+const g = globalThis as unknown as { __nowSweep?: Promise<IndexResult> };
+
+/** 전체 재색인 (비동기) — 묶음 사이에 이벤트 루프를 내준다. 같은 프로세스에서 이미 도는 스윕이 있으면 그것을 기다린다 */
+export function reindexAllAsync(db: DB, now = new Date()): Promise<IndexResult> {
+  g.__nowSweep ??= (async () => {
+    const res: IndexResult = { rendered: 0, changed: 0, removed: 0 };
+    try {
+      await yieldLoop();
+      // 일괄 적재는 한 트랜잭션 (FTS 를 끝에 한 번에 만든다) — 빈 색인·형식 변경 때 한 번뿐이다
+      if (needsBulk(db)) return bulkReindex(db, now);
+      for (const _ of sweepSteps(db, now, res)) await yieldLoop();
+      return res;
+    } finally {
+      g.__nowSweep = undefined;
+    }
+  })();
+  return g.__nowSweep;
+}
+
+/** 이 프로세스에서 백그라운드 스윕이 도는 중인가 */
+export const sweepRunning = () => !!g.__nowSweep;
+
+/** 스윕을 시작한 시점의 이벤트 머리로 커서를 (뒤로 가지 않게) 옮긴다 — 그 뒤의 변화는 다음 증분이 반영한다 */
+function advanceCursor(db: DB, head: number) {
+  db.transaction(() => {
+    if (head > Number(getSetting(db, "index_cursor") ?? 0)) setSetting(db, "index_cursor", String(head));
+  })();
 }
 
 /** 카드에 이 객체의 이름이 들어가는 객체들 (외래키로 이 객체를 가리키는 쪽 + 이 객체를 대상·근거로 둔 기억) */
@@ -119,25 +215,38 @@ function isRef(x: unknown): x is Ref {
   return !!r && typeof r.id === "number" && (OBJECT_TYPES as readonly string[]).includes(r.type);
 }
 
+type Pending = IndexResult & { mode: "none" | "incremental" | "sweep" };
+const NONE: Pending = { rendered: 0, changed: 0, removed: 0, mode: "none" };
+
 /**
  * 워커 틱마다 호출. 마지막 처리 이후의 action.applied 이벤트에서 바뀐 객체를 모아 다시 색인한다.
  * 처음이거나, 색인 형식이 바뀌었거나, 한 시간이 지났으면 전체 스윕 (이벤트 밖의 변화 — 사용자 정의 링크 상대의 이름 변경 등 — 을 따라잡는다).
+ * 증분은 커서 전진과 한 트랜잭션, 스윕은 묶음마다 커밋한 뒤 커서를 옮긴다.
  */
-export function indexPending(db: DB, now = new Date(), o: { periodicSweep?: boolean } = {}): IndexResult & { mode: "none" | "incremental" | "sweep" } {
-  // 커서 전진과 색인 쓰기를 한 트랜잭션으로 (여러 워커가 돌아도 결과가 같다)
-  return db.transaction(() => pending(db, now, o.periodicSweep !== false))();
+export function indexPending(db: DB, now = new Date(), o: { periodicSweep?: boolean } = {}): Pending {
+  const plan = db.transaction(() => incremental(db, now, o.periodicSweep !== false))();
+  if (plan.mode !== "sweep-needed") return plan;
+  const r = reindexAll(db, now);
+  advanceCursor(db, plan.head);
+  return { ...r, mode: "sweep" };
 }
 
-function pending(db: DB, now: Date, periodicSweep: boolean): IndexResult & { mode: "none" | "incremental" | "sweep" } {
+/** indexPending 의 비동기판 — 스윕이면 묶음 사이에 이벤트 루프를 내준다 (워커 — Next 서버 안에서 돈다) */
+export async function indexPendingAsync(db: DB, now = new Date(), o: { periodicSweep?: boolean } = {}): Promise<Pending> {
+  const plan = db.transaction(() => incremental(db, now, o.periodicSweep !== false))();
+  if (plan.mode !== "sweep-needed") return plan;
+  const r = await reindexAllAsync(db, now);
+  advanceCursor(db, plan.head);
+  return { ...r, mode: "sweep" };
+}
+
+/** 증분 반영 — 스윕이 필요하면 쓰지 않고 그렇다고 알린다 (스윕은 이 트랜잭션 밖에서 묶음으로) */
+function incremental(db: DB, now: Date, periodicSweep: boolean): Pending | { mode: "sweep-needed"; head: number } {
   const swept = getSetting(db, "index_swept_at");
   const cursor = Number(getSetting(db, "index_cursor") ?? 0);
   const head = lastEventId(db);
-  if (!swept || formatStale(db) || (periodicSweep && now.getTime() - new Date(swept).getTime() > SWEEP_EVERY_MS)) {
-    const r = reindexAll(db, now);
-    setSetting(db, "index_cursor", String(head));
-    return { ...r, mode: "sweep" };
-  }
-  if (head <= cursor) return { rendered: 0, changed: 0, removed: 0, mode: "none" };
+  if (!swept || formatStale(db) || (periodicSweep && now.getTime() - new Date(swept).getTime() > SWEEP_EVERY_MS)) return { mode: "sweep-needed", head };
+  if (head <= cursor) return NONE;
   const rows = db.prepare("SELECT payload FROM events WHERE id > ? AND id <= ? AND type = 'action.applied'").all(cursor, head) as { payload: string }[];
   const touched = new Map<string, Ref>();
   // 이름이 바뀌었을 수 있어 카드에 그 이름을 담은 객체까지 따라가야 하는 ref.
@@ -163,22 +272,38 @@ function pending(db: DB, now: Date, periodicSweep: boolean): IndexResult & { mod
     }
   }
   // 한도는 확장 뒤의 수로 — 허브 객체에 딸린 것이 많으면 증분보다 스윕이 낫다
-  if (all.size > MAX_INCREMENTAL) {
-    const r = reindexAll(db, now);
-    setSetting(db, "index_cursor", String(head));
-    return { ...r, mode: "sweep" };
-  }
+  if (all.size > MAX_INCREMENTAL) return { mode: "sweep-needed", head };
   const r = reindexRefs(db, [...all.values()]);
   setSetting(db, "index_cursor", String(head));
   return { ...r, mode: "incremental" };
 }
 
+/** 요청 경로에서 동기로 전체 색인해도 되는 크기 (소유자 수) — 넘으면 백그라운드 스윕을 시작하고 지금 있는 색인으로 답한다 */
+const REQUEST_SWEEP_MAX = 5000;
+
+const ownerCount = (db: DB) => INDEXED_TYPES.reduce((n, t) => n + (db.prepare(`SELECT COUNT(*) FROM ${OWNER_TABLE[t]}`).pluck().get() as number), 0);
+
 /**
  * 화면·도구가 색인을 읽기 전에: 없으면 만들고, 반영 안 된 이벤트가 있으면 증분 반영한다.
  * 워커가 꺼져 있어도(NOW_WORKER=off) 검색이 최신이도록. 주기 스윕은 워커 몫 — 요청 경로에서는 하지 않는다.
+ * 큰 데이터의 전체 색인(첫 색인 · 형식 변경 · 증분 한도 초과)은 요청 안에서 하지 않는다 — 백그라운드 스윕을 시작하고
+ * "building" 을 돌려준다 (호출자는 지금 있는 색인으로 답하고 강등을 알린다).
  */
-export function ensureIndexed(db: DB) {
-  if (!getSetting(db, "index_swept_at") || formatStale(db) || lastEventId(db) > Number(getSetting(db, "index_cursor") ?? 0)) indexPending(db, new Date(), { periodicSweep: false });
+export function ensureIndexed(db: DB): "fresh" | "building" {
+  if (sweepRunning()) return "building";
+  const fresh = getSetting(db, "index_swept_at") && !formatStale(db);
+  if (fresh && lastEventId(db) <= Number(getSetting(db, "index_cursor") ?? 0)) return "fresh";
+  const plan = db.transaction(() => incremental(db, new Date(), false))();
+  if (plan.mode !== "sweep-needed") return "fresh";
+  if (ownerCount(db) <= REQUEST_SWEEP_MAX) {
+    reindexAll(db);
+    advanceCursor(db, plan.head);
+    return "fresh";
+  }
+  reindexAllAsync(db)
+    .then(() => advanceCursor(db, plan.head))
+    .catch((e) => console.error("[now-index] 백그라운드 색인 실패", e));
+  return "building";
 }
 
 export type IndexStats = { chunks: number; owners: number; tokens: number; byType: Record<string, number>; sweptAt: string | null; cursor: number; lag: number };

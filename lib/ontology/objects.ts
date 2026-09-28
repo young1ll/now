@@ -7,12 +7,12 @@ import {
 import { formatMoney } from "@/lib/money";
 import { type AgentRow, getAgent, listAgents } from "@/lib/repos/agents";
 import { getBusiness, listBusinesses } from "@/lib/repos/businesses";
-import { getClient, listClients, listInteractions } from "@/lib/repos/clients";
-import { getInvoice, listExpenses, listInvoices } from "@/lib/repos/finance";
+import { type ClientRow, getClient, listClients, listInteractions } from "@/lib/repos/clients";
+import { type InvoiceRow, getInvoice, listExpenses, listInvoices } from "@/lib/repos/finance";
 import { type MemoryRow, creatorName, getMemory, listMemories, memoryLinks } from "@/lib/repos/memories";
 import { NOTE_KINDS, type NoteKind, type NoteRow, countNotesByKind, getNoteRow, listNotes } from "@/lib/repos/notes";
 import type { Scope } from "@/lib/repos/scope";
-import { getTask, listTasks } from "@/lib/repos/tasks";
+import { type TaskRow, getTask, listTasks } from "@/lib/repos/tasks";
 import { memoryActionsFor } from "./actions/memory";
 import { noteActionsFor } from "./actions/note";
 import { nodeInfo } from "./graph";
@@ -130,6 +130,26 @@ const business: ObjectTypeDef = {
 
 // ── client ───────────────────────────────────────────────
 
+function clientRecord(c: ClientRow): ObjectRecord {
+  return {
+    ref: ref("client", c.id),
+    displayId: displayId("client", c.id),
+    title: c.name,
+    subtitle: [c.email, c.phone].filter(Boolean).join(" · "),
+    businessId: c.business_id,
+    status: CLIENT_STATUS[c.status],
+    props: {
+      business: c.business_name,
+      kind: CLIENT_KIND[c.kind],
+      last_contact: formatDate(c.last_contact),
+      open_tasks: String(c.open_tasks),
+      tags: c.tags || "—",
+      email: c.email || "—",
+      phone: c.phone || "—",
+    },
+  };
+}
+
 const client: ObjectTypeDef = {
   type: "client",
   label: "고객",
@@ -144,28 +164,11 @@ const client: ObjectTypeDef = {
     { key: "open_tasks", label: "열린 업무", num: true },
     { key: "tags", label: "태그" },
   ],
-  list: (db, scope, q) =>
-    listClients(db, scope, { q }).map((c) => ({
-      ref: ref("client", c.id),
-      displayId: displayId("client", c.id),
-      title: c.name,
-      subtitle: [c.email, c.phone].filter(Boolean).join(" · "),
-      businessId: c.business_id,
-      status: CLIENT_STATUS[c.status],
-      props: {
-        business: c.business_name,
-        kind: CLIENT_KIND[c.kind],
-        last_contact: formatDate(c.last_contact),
-        open_tasks: String(c.open_tasks),
-        tags: c.tags || "—",
-        email: c.email || "—",
-        phone: c.phone || "—",
-      },
-    })),
+  list: (db, scope, q) => listClients(db, scope, { q }).map(clientRecord),
   get(db, id) {
     const c = getClient(db, id);
     if (!c) return undefined;
-    const rec = client.list(db, c.business_id).find((r) => r.ref.id === id)!;
+    const rec = listClients(db, c.business_id, { id }).map(clientRecord)[0];
     const tasks = listTasks(db, null, { view: "all", clientId: id });
     const invoices = listInvoices(db, null, { clientId: id });
     const notes = listNotes(db, null, { clientId: id });
@@ -193,6 +196,26 @@ function dueLabel(due: string | null, status: string) {
   return `${formatDate(due)} (${d < 0 ? `${-d}일 지남` : d === 0 ? "오늘" : `D-${d}`})`;
 }
 
+function taskRecord(t: TaskRow): ObjectRecord {
+  return {
+    ref: ref("task", t.id),
+    displayId: displayId("task", t.id),
+    title: t.title,
+    subtitle: t.detail.slice(0, 80),
+    businessId: t.business_id,
+    status: TASK_STATUS[t.status],
+    props: {
+      due: dueLabel(t.due_date, t.status),
+      priority: PRIORITY[t.priority],
+      client: t.client_name ?? "—",
+      business: t.business_name,
+      recurrence: t.recurrence === "none" ? "—" : RECURRENCE[t.recurrence],
+      completed: formatDate(t.completed_at),
+      created: formatDate(t.created_at),
+    },
+  };
+}
+
 const task: ObjectTypeDef = {
   type: "task",
   label: "업무",
@@ -211,27 +234,11 @@ const task: ObjectTypeDef = {
   list: (db, scope, q) =>
     listTasks(db, scope, { view: "all" })
       .filter((t) => match(q, t.title, t.detail, t.client_name))
-      .map((t) => ({
-        ref: ref("task", t.id),
-        displayId: displayId("task", t.id),
-        title: t.title,
-        subtitle: t.detail.slice(0, 80),
-        businessId: t.business_id,
-        status: TASK_STATUS[t.status],
-        props: {
-          due: dueLabel(t.due_date, t.status),
-          priority: PRIORITY[t.priority],
-          client: t.client_name ?? "—",
-          business: t.business_name,
-          recurrence: t.recurrence === "none" ? "—" : RECURRENCE[t.recurrence],
-          completed: formatDate(t.completed_at),
-          created: formatDate(t.created_at),
-        },
-      })),
+      .map(taskRecord),
   get(db, id) {
     const t = getTask(db, id);
     if (!t) return undefined;
-    const rec = task.list(db, t.business_id).find((r) => r.ref.id === id)!;
+    const rec = listTasks(db, t.business_id, { view: "all", id }).map(taskRecord)[0];
     const b = getBusiness(db, t.business_id);
     const c = t.client_id ? getClient(db, t.client_id) : undefined;
     return detail(
@@ -244,6 +251,31 @@ const task: ObjectTypeDef = {
 };
 
 // ── invoice ──────────────────────────────────────────────
+
+function invoiceRecord(i: InvoiceRow): ObjectRecord {
+  const overdue = i.status === "sent" && i.balance > 0 && !!i.due_date && i.due_date < today();
+  return {
+    ref: ref("invoice", i.id),
+    displayId: displayId("invoice", i.id),
+    title: `${i.number} · ${i.client_name ?? "고객 없음"}`,
+    subtitle: i.business_name,
+    businessId: i.business_id,
+    status: overdue ? { label: "기한 경과", tone: "red" as Tone } : INVOICE_STATUS[i.status],
+    props: {
+      number: i.number,
+      client: i.client_name ?? "—",
+      business: i.business_name,
+      issue_date: formatDate(i.issue_date),
+      due_date: formatDate(i.due_date),
+      subtotal: formatMoney(i.subtotal, i.currency),
+      tax: `${formatMoney(i.tax, i.currency)} (${i.tax_rate}%)`,
+      total: formatMoney(i.total, i.currency),
+      paid: formatMoney(i.paid, i.currency),
+      balance: i.status === "void" ? "—" : formatMoney(i.balance, i.currency),
+      currency: i.currency,
+    },
+  };
+}
 
 const invoice: ObjectTypeDef = {
   type: "invoice",
@@ -276,34 +308,11 @@ const invoice: ObjectTypeDef = {
   list: (db, scope, q) =>
     listInvoices(db, scope)
       .filter((i) => match(q, i.number, i.client_name, i.memo))
-      .map((i) => {
-        const overdue = i.status === "sent" && i.balance > 0 && !!i.due_date && i.due_date < today();
-        return {
-          ref: ref("invoice", i.id),
-          displayId: displayId("invoice", i.id),
-          title: `${i.number} · ${i.client_name ?? "고객 없음"}`,
-          subtitle: i.business_name,
-          businessId: i.business_id,
-          status: overdue ? { label: "기한 경과", tone: "red" as Tone } : INVOICE_STATUS[i.status],
-          props: {
-            number: i.number,
-            client: i.client_name ?? "—",
-            business: i.business_name,
-            issue_date: formatDate(i.issue_date),
-            due_date: formatDate(i.due_date),
-            subtotal: formatMoney(i.subtotal, i.currency),
-            tax: `${formatMoney(i.tax, i.currency)} (${i.tax_rate}%)`,
-            total: formatMoney(i.total, i.currency),
-            paid: formatMoney(i.paid, i.currency),
-            balance: i.status === "void" ? "—" : formatMoney(i.balance, i.currency),
-            currency: i.currency,
-          },
-        };
-      }),
+      .map(invoiceRecord),
   get(db, id) {
     const d = getInvoice(db, id);
     if (!d) return undefined;
-    const rec = invoice.list(db, d.invoice.business_id).find((r) => r.ref.id === id)!;
+    const rec = invoiceRecord(d.invoice);
     const c = d.invoice.client_id ? getClient(db, d.invoice.client_id) : undefined;
     return detail(
       rec,
@@ -332,21 +341,25 @@ const expense: ObjectTypeDef = {
   list: (db, scope, q) =>
     listExpenses(db, scope)
       .filter((e) => match(q, e.description, e.category))
-      .map((e) => ({
-        ref: ref("expense", e.id),
-        displayId: displayId("expense", e.id),
-        title: e.description,
-        subtitle: e.category,
-        businessId: e.business_id,
-        props: { spent_at: formatDate(e.spent_at), category: e.category, business: e.business_name, amount: formatMoney(e.amount, e.currency) },
-      })),
+      .map(expenseRecord),
   get(db, id) {
-    const rec = expense.list(db, null).find((r) => r.ref.id === id);
+    const rec = listExpenses(db, null, undefined, id).map(expenseRecord)[0];
     if (!rec) return undefined;
     const raw = db.prepare("SELECT * FROM expenses WHERE id = ?").get(id) as Record<string, unknown>;
     return detail(rec, { spent_at: "일자", category: "분류", business: "사업", amount: "금액" }, [link("business", rec.businessId!, rec.props.business, "소속 사업")], raw);
   },
 };
+
+function expenseRecord(e: ReturnType<typeof listExpenses>[number]): ObjectRecord {
+  return {
+    ref: ref("expense", e.id),
+    displayId: displayId("expense", e.id),
+    title: e.description,
+    subtitle: e.category,
+    businessId: e.business_id,
+    props: { spent_at: formatDate(e.spent_at), category: e.category, business: e.business_name, amount: formatMoney(e.amount, e.currency) },
+  };
+}
 
 // ── note ─────────────────────────────────────────────────
 
@@ -463,7 +476,7 @@ const agent: ObjectTypeDef = {
   get(db, id) {
     const a = getAgent(db, id);
     if (!a) return undefined;
-    const rec = agent.list(db, null).find((r) => r.ref.id === id)!;
+    const rec = listAgents(db, new Date(Date.now() - 86_400_000).toISOString(), id).map(agentRecord)[0];
     const { token_hash: _omit, ...raw } = a;
     const links = a.business_scope ? [link("business", a.business_scope, rec.props.scope, "사업 범위")] : [];
     return detail(

@@ -6,7 +6,8 @@ import { type AnyAction, resolveRisk, targetRef } from "./action";
 import { ACTIONS } from "./actions";
 import { formatZodError } from "./fields";
 import { getObject } from "./objects";
-import { decide, scopeDenial } from "./policy";
+import { businessesOf, decide, scopeDenial } from "./policy";
+import { objectExists } from "./graph";
 import { getAgent } from "@/lib/repos/agents";
 import { redactSecrets } from "@/lib/knowledge/redact";
 import { ActionError, type Actor, type Ref } from "./types";
@@ -97,14 +98,18 @@ export function executeAction(db: DB, req: ExecuteRequest): ExecuteResult {
   }
 
   const target = targetRef(def, input);
-  // 존재하지 않는 대상에 대한 요청은 승인 대기로 보내지 않는다
-  if (target && !getObject(db, target)) {
+  // 이 요청이 닿는 사업들 — 감사 run·이벤트에 싣는다 (사업 범위 에이전트의 이벤트 필터: 대상 없는 요청·나중에 지워진 대상도 거를 수 있게).
+  // 새 사업을 만드는 요청은 어떤 범위에도 들지 않는다 → 모름(null)
+  const touched = businessesOf(db, def, input, target);
+  const businessIds = touched === "new_business" ? null : touched;
+  // 존재하지 않는 대상에 대한 요청은 승인 대기로 보내지 않는다 (존재 확인은 가볍게 — 객체 전체를 만들지 않는다)
+  if (target && !objectExists(db, target)) {
     const msg = `대상 ${target.type} ${target.id} 을(를) 찾을 수 없습니다`;
     if (!isAgent) throw new ActionError(msg);
-    return record({ action: def.name, actor, risk: "low", status: "failed", params: input, reason: req.reason, error: msg });
+    return record({ action: def.name, actor, risk: "low", status: "failed", params: input, reason: req.reason, error: msg, businessIds });
   }
   const stored = def.redact?.length && def.humanOnly ? Object.fromEntries(Object.entries(input).map(([k, v]) => [k, def.redact!.includes(k) && v ? "[redacted]" : v])) : input;
-  const base = { action: def.name, actor, risk, params: stored, reason: req.reason, refs: target ? [target] : [] };
+  const base = { action: def.name, actor, risk, params: stored, reason: req.reason, refs: target ? [target] : [], businessIds };
   const decision = decide(db, actor, def, risk, input, target);
 
   if (decision.kind === "deny") return record({ ...base, status: "denied", error: decision.why });

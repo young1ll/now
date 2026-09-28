@@ -11,7 +11,7 @@ import { Icon } from "@/components/icons";
 import { Actor, Callout, Empty, PageHeader, Panel, Tag, timeAgo } from "@/components/ui";
 import { db } from "@/lib/db";
 import { AI_MODE_LABEL } from "@/lib/ontology/actions/system";
-import { computeSignals } from "@/lib/ontology/signals";
+import { trustSuggestions } from "@/lib/ontology/trust";
 import { AGENT_ROLE, MEMORY_TRUST } from "@/lib/labels";
 import { getAction } from "@/lib/ontology/execute";
 import { type SearchParams, one } from "@/lib/params";
@@ -39,7 +39,7 @@ export default async function AgentsPage({ searchParams }: { searchParams: Searc
   const origin = `${h.get("x-forwarded-proto") ?? "http"}://${h.get("host") ?? "localhost:3000"}`;
   const token = newToken ?? "<토큰>";
   // 넓힐 후보 (자율 권한 · 기억 등급) — 신호에서
-  const candidates = computeSignals(db(), null).filter((s) => TRUST_KINDS.includes(s.kind));
+  const candidates = trustSuggestions(db()).filter((s) => TRUST_KINDS.includes(s.kind));
   const live = agents.filter((a) => a.status !== "revoked");
 
   return (
@@ -57,7 +57,7 @@ export default async function AgentsPage({ searchParams }: { searchParams: Searc
         </div>
       )}
 
-      <div className="grid gap-px bg-void p-px xl:grid-cols-12">
+      <div className="grid grid-cols-1 gap-px bg-void p-px xl:grid-cols-12">
         <div className="flex flex-col gap-px xl:col-span-7">
           <Panel title="AI 운영 모드 — 개입 수준">
             <div className="grid gap-px bg-line sm:grid-cols-2">
@@ -165,7 +165,7 @@ curl -X POST -H "Authorization: Bearer ${token}" \\
         </div>
       </div>
 
-      <div className="grid gap-px bg-void p-px xl:grid-cols-2">
+      <div className="grid grid-cols-1 gap-px bg-void p-px xl:grid-cols-2">
         {live.map((a) => (
           <TrustPanel key={a.id} agent={a} path="/agents" title suggestions={candidates.filter((s) => s.ref?.type === "agent" && s.ref.id === a.id)} />
         ))}

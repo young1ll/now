@@ -6,8 +6,8 @@ import { Icon } from "@/components/icons";
 import { ApprovalCard, RunTable } from "@/components/runs";
 import { AutonomyLine } from "@/components/trust";
 import { Actor, Empty, Metric, ObjectLink, PageHeader, Panel, SEVERITY, Tag, timeAgo } from "@/components/ui";
-import { currentScope } from "@/lib/context";
-import { daysBetween, formatDate } from "@/lib/dates";
+import { currentScope, requestSignals } from "@/lib/context";
+import { daysBetween, formatDate, today } from "@/lib/dates";
 import { db } from "@/lib/db";
 import { formatMoney } from "@/lib/money";
 import { getAction } from "@/lib/ontology/execute";
@@ -20,12 +20,18 @@ import { Onboarding } from "./onboarding";
 
 export const metadata = { title: "오퍼레이션" };
 
+/** 홈 신호 표에 그리는 수 (나머지는 "전체 보기") */
+const SIGNALS_SHOWN = 100;
+
 export default async function OperationsPage({ searchParams }: { searchParams: SearchParams }) {
   const sp = await searchParams;
   if (listBusinesses(db(), { includeArchived: true }).length === 0) return <Onboarding sp={sp} />;
 
   const scope = await currentScope();
-  const o = opsOverview(db(), scope);
+  const on = today();
+  const o = opsOverview(db(), scope, on, requestSignals(scope, on));
+  // 신호가 수천 개면 전부 그리는 화면이 수 MB 가 된다 (10초마다 새로고침) — 앞부분만, 전체는 명시적으로
+  const allSignals = sp.signals === "all";
   const hours = runsPerHour(db(), 24);
   const crit = o.signals.filter((s) => s.severity === "critical").length;
   const warn = o.signals.filter((s) => s.severity === "warning").length;
@@ -33,7 +39,7 @@ export default async function OperationsPage({ searchParams }: { searchParams: S
 
   return (
     <>
-      <AutoRefresh seconds={10} />
+      <AutoRefresh seconds={allSignals ? 60 : 10} />
       <PageHeader
         icon="ops"
         eyebrow="운영 · 실시간"
@@ -69,7 +75,7 @@ export default async function OperationsPage({ searchParams }: { searchParams: S
 
       <AutonomyLine a={o.autonomy} />
 
-      <div className="grid gap-px bg-void p-px xl:grid-cols-12">
+      <div className="grid grid-cols-1 gap-px bg-void p-px xl:grid-cols-12">
         {/* 신호 큐 */}
         <div id="signals" className="xl:col-span-8">
           <Panel title="신호 — 주의가 필요한 상태" count={o.signals.length} flush className="h-full">
@@ -82,7 +88,7 @@ export default async function OperationsPage({ searchParams }: { searchParams: S
                     <tr><th className="w-[70px]">심각도</th><th>신호</th><th>객체</th><th className="w-[70px]">경과</th><th>제안 액션</th></tr>
                   </thead>
                   <tbody>
-                    {o.signals.map((s) => {
+                    {o.signals.slice(0, allSignals ? undefined : SIGNALS_SHOWN).map((s) => {
                       const sev = SEVERITY[s.severity];
                       return (
                         <tr key={s.key}>
@@ -113,6 +119,12 @@ export default async function OperationsPage({ searchParams }: { searchParams: S
                     })}
                   </tbody>
                 </table>
+                {!allSignals && o.signals.length > SIGNALS_SHOWN && (
+                  <div className="border-t border-line-soft px-3 py-2 text-[12px] text-fg-3">
+                    심각도 순 앞 {SIGNALS_SHOWN}개 · 외 {o.signals.length - SIGNALS_SHOWN}개 —{" "}
+                    <Link href="/?signals=all#signals" className="text-primary-fg hover:underline">전체 보기</Link>
+                  </div>
+                )}
               </div>
             )}
           </Panel>

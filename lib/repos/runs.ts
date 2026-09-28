@@ -22,21 +22,34 @@ export type Run = {
   flagged_at: string | null;
   flagged_by: string | null;
   flag_note: string | null;
+  /** 이 요청이 닿는 사업들 (JSON 배열, NULL = 모름 — 파싱 전에 실패한 요청 · 이전 버전의 run) */
+  business_ids: string | null;
 };
 
 export type RunResult = { summary: string; refs: Ref[]; data?: unknown };
 
-export type RunView = Omit<Run, "params" | "result"> & {
+export type RunView = Omit<Run, "params" | "result" | "business_ids"> & {
   params: Record<string, unknown>;
   result: RunResult | null;
   refs: Ref[];
+  business_ids: number[] | null;
 };
+
+function parseBusinessIds(s: string | null | undefined): number[] | null {
+  if (!s) return null;
+  try {
+    const v = JSON.parse(s);
+    return Array.isArray(v) && v.every((x) => typeof x === "number") ? v : null;
+  } catch {
+    return null;
+  }
+}
 
 function view(db: DB, r: Run): RunView {
   const refs = db
     .prepare("SELECT object_type AS type, object_id AS id FROM action_run_refs WHERE run_id = ? ORDER BY rowid")
     .all(r.id) as Ref[];
-  return { ...r, params: JSON.parse(r.params), result: r.result ? JSON.parse(r.result) : null, refs };
+  return { ...r, params: JSON.parse(r.params), result: r.result ? JSON.parse(r.result) : null, refs, business_ids: parseBusinessIds(r.business_ids) };
 }
 
 export function insertRun(
@@ -52,14 +65,16 @@ export function insertRun(
     error?: string | null;
     refs?: Ref[];
     decided_by?: string | null;
+    /** 요청이 닿는 사업들 (policy.businessesOf) — 모르면 생략. 사업 범위 에이전트의 이벤트 필터가 모르는 run 은 가린다 */
+    businessIds?: number[] | null;
   },
 ): number {
   const id = Number(
     db
       .prepare(
         `INSERT INTO action_runs (action, actor_type, actor_id, actor_name, risk, status, params, reason, result, error,
-           decided_at, decided_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           decided_at, decided_by, business_ids)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         r.action,
@@ -74,6 +89,7 @@ export function insertRun(
         r.error ?? null,
         r.decided_by ? new Date().toISOString() : null,
         r.decided_by ?? null,
+        r.businessIds ? JSON.stringify(r.businessIds) : null,
       ).lastInsertRowid,
   );
   const refs = [...(r.result?.refs ?? []), ...(r.refs ?? [])];
@@ -82,7 +98,7 @@ export function insertRun(
     type: `action.${r.status}`,
     actor: r.actor,
     subject: refs[0] ?? null,
-    payload: { run_id: id, action: r.action, risk: r.risk, summary: r.result?.summary ?? null, error: r.error ?? null, reason: r.reason ?? "", refs },
+    payload: { run_id: id, action: r.action, risk: r.risk, summary: r.result?.summary ?? null, error: r.error ?? null, reason: r.reason ?? "", refs, ...(r.businessIds ? { business_ids: r.businessIds } : {}) },
   });
   return id;
 }
@@ -117,7 +133,7 @@ export function completeRun(
       type: `action.${u.status}`,
       actor: { type: run.actor_type, id: run.actor_id },
       subject: run.refs[0] ?? null,
-      payload: { run_id: id, action: run.action, risk: run.risk, summary: run.result?.summary ?? null, error: run.error, decided_by: run.decided_by, decision_note: run.decision_note, refs: run.refs },
+      payload: { run_id: id, action: run.action, risk: run.risk, summary: run.result?.summary ?? null, error: run.error, decided_by: run.decided_by, decision_note: run.decision_note, refs: run.refs, ...(run.business_ids ? { business_ids: run.business_ids } : {}) },
     });
   }
 }

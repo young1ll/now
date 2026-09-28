@@ -42,7 +42,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Sear
           </>
         }
       />
-      <div className="grid gap-px bg-void p-px xl:grid-cols-12">
+      <div className="grid grid-cols-1 gap-px bg-void p-px xl:grid-cols-12">
         <div className="flex flex-col gap-px xl:col-span-7">
           {currencies.length === 0 && <Panel><Empty icon="finance">입금·지출 기록이 없습니다.</Empty></Panel>}
           {currencies.map((cur) => {

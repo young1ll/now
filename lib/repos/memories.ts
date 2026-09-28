@@ -1,6 +1,7 @@
 // 기억(memory) 저장소. 읽기 함수는 어디서나, 쓰기 함수는 lib/ontology/actions/memory.ts 에서만 부른다
 // (예외: recordMemoryUse — 사용 기록은 텔레메트리라 액션이 아니다. agents.last_seen_at 과 같은 취급).
 import type { DB } from "@/lib/db";
+import { IN_JSON, jsonList } from "@/lib/db/sql";
 import type { ObjectType, Ref } from "@/lib/ontology/types";
 import type { Scope } from "./scope";
 
@@ -216,9 +217,9 @@ export function effectiveUses(db: DB, since: string, ids?: number[]): Map<number
       .prepare(
         `SELECT u.memory_id AS id, COUNT(*) AS n FROM memory_uses u LEFT JOIN agent_sessions s ON s.id = u.session_id
          WHERE u.used_at >= ? AND (u.how = 'cited' OR u.session_id IS NULL OR s.status = 'succeeded')
-         ${part ? `AND u.memory_id IN (${part.map(() => "?").join(",")})` : ""} GROUP BY u.memory_id`,
+         ${part ? `AND u.memory_id IN ${IN_JSON}` : ""} GROUP BY u.memory_id`,
       )
-      .all(since, ...(part ?? [])) as { id: number; n: number }[];
+      .all(since, ...(part ? [jsonList(part)] : [])) as { id: number; n: number }[];
     for (const r of rows) out.set(r.id, r.n);
   };
   if (!ids) run();

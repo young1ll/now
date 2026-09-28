@@ -56,7 +56,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
           </form>
         </div>
       )}
-      <div className="grid gap-px bg-void p-px lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-px bg-void p-px lg:grid-cols-2">
         <div className="flex flex-col gap-px">
           {run.status === "pending" && <Panel title="결정"><ApprovalCard run={run} /></Panel>}
           <Panel title="실행 정보">

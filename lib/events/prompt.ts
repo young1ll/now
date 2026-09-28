@@ -12,3 +12,8 @@ export function stripUntrusted(prompt: string): string {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
+
+/** 화면에 보일 요청 한 줄 — 신뢰 경계 안내문·이벤트 원문을 뺀 첫 줄 (트리거 세션이 모두 같은 안내문으로 보이지 않게). 없으면 fallback */
+export function promptHeadline(prompt: string, fallback = "(지시문 없음)"): string {
+  return stripUntrusted(prompt).split("\n").map((l) => l.trim()).find(Boolean) ?? fallback;
+}

@@ -20,9 +20,10 @@ const HELP = `now — Now 사업 운영 체제 CLI (에이전트용)
 
 기억 (AI 가 제안하고 사람이 확인한다)
   now context [--about ref,ref] [--task "하려는 일"] [--budget 2000]   작업용 기억·문서 팩 (<memory-context> 데이터)
-  now remember "<문장>" --kind fact --about ref --evidence ref[,ref] --reason "근거"
+  now remember "<문장>" --kind fact --about ref --evidence ref[,ref] --reason "근거" [--tainted] [--confidence 0.7] [--contradicts 12,15]
       kind: fact 사실 · preference 선호 · lesson 교훈 · procedure_hint 절차 힌트 · caution 주의
       문장은 대상을 이름으로 쓴 한 문장 ("한빛상사는 …"), 지시문·비밀값 금지. evidence 1개 이상 필수
+      메일·웹훅 등 외부 입력에서 알게 된 것은 반드시 --tainted (외부 출처 — 사람 확인 전에는 활성이 되지 않는다)
   now memories [--status proposed,active] [--kind fact] [--about ref]   기억 목록
   now cite <기억 id…>                     팩 밖에서 찾아 쓴 기억의 사용 기록 (답에는 [mem:N] 으로 인용)
   now episodes [--since ISO] [--limit 20]   지난 AI 세션 요약(에피소드) — 기억 정리의 원료
@@ -49,10 +50,12 @@ for (let i = 0; i < argv.length; i++) {
   if (a.startsWith("--")) {
     const k = a.slice(2);
     const next = argv[i + 1];
-    if (next !== undefined && !next.startsWith("--") && !["follow", "text", "help"].includes(k)) (flags[k] = next), i++;
+    if (next !== undefined && !next.startsWith("--") && !["follow", "text", "help", "tainted", "no-tainted"].includes(k)) (flags[k] = next), i++;
     else flags[k] = true;
   } else pos.push(a);
 }
+
+const REMEMBER_FLAGS = ["kind", "about", "evidence", "confidence", "contradicts", "tainted", "reason"];
 
 const BASE = (process.env.NOW_URL || "http://127.0.0.1:3000").replace(/\/$/, "");
 const TOKEN = process.env.NOW_AGENT_TOKEN || "";
@@ -157,6 +160,9 @@ const commands = {
     if (!a1) die('문장이 필요합니다: now remember "<문장>" --kind fact --evidence ref --reason "근거"');
     if (!flags.reason) die('--reason "근거" 가 필요합니다');
     if (!flags.evidence) die("--evidence ref 가 필요합니다 (근거 객체 1개 이상)");
+    // 모르는 플래그를 조용히 버리지 않는다 (오타 난 --tainted 가 오염 표시 없이 저장되지 않게)
+    const unknown = Object.keys(flags).filter((k) => !REMEMBER_FLAGS.includes(k));
+    if (unknown.length) die(`알 수 없는 플래그: ${unknown.map((k) => `--${k}`).join(", ")} (가능: ${REMEMBER_FLAGS.map((k) => `--${k}`).join(" ")})`);
     return call("remember", {
       statement: a1,
       kind: flags.kind === undefined || flags.kind === true ? "fact" : flags.kind,
@@ -164,6 +170,7 @@ const commands = {
       evidence: list(flags.evidence),
       confidence: num(flags.confidence),
       contradicts: list(flags.contradicts)?.map(Number),
+      tainted: flags.tainted === true ? true : undefined,
       reason: flags.reason,
     });
   },

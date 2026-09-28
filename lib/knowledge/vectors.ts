@@ -14,6 +14,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import * as sqliteVec from "sqlite-vec";
+import { IN_JSON, jsonList } from "@/lib/db/sql";
 import type { DB } from "@/lib/db";
 import type { EmbeddingSpace } from "@/lib/repos/embeddings";
 
@@ -44,7 +45,7 @@ export function attachVectors(db: DB): boolean {
   if (known) return known.ok;
   const file = vecPathFor(db.name);
   // HMR 로 이 모듈만 다시 평가된 경우: 연결은 이미 붙어 있다
-  const attached = (db.pragma("database_list") as { name: string }[]).some((d) => d.name === "vec");
+  const attached = (db.prepare("PRAGMA database_list").all() as { name: string }[]).some((d) => d.name === "vec");
   // ATTACH 는 트랜잭션 안에서 할 수 없다 — 실패로 기억하지 않고 이번만 없는 것으로 (다음 호출에서 다시 시도)
   if (!attached && db.inTransaction) return false;
   try {
@@ -211,7 +212,7 @@ export function knn(db: DB, space: Pick<EmbeddingSpace, "id" | "dim">, q: Float3
   const cand = Math.min(VEC0_MAX_K, o.candidates ?? Math.max(k * 20, 200));
   const ids = (db.prepare(`SELECT rowid AS id FROM ${knnTable(space.id)} WHERE e MATCH vec_bit(?) AND k = ?`).all(toBits(q), cand) as { id: number }[]).map((r) => r.id);
   if (!ids.length) return [];
-  const rows = db.prepare(`SELECT content_hash AS hash, f FROM vec.vectors WHERE id IN (${ids.map(() => "?").join(",")})`).all(...ids) as { hash: string; f: Buffer }[];
+  const rows = db.prepare(`SELECT content_hash AS hash, f FROM vec.vectors WHERE id IN ${IN_JSON}`).all(jsonList(ids)) as { hash: string; f: Buffer }[];
   return rows
     .map((r) => ({ hash: r.hash, score: dot(q, fromBlob(r.f)) }))
     .sort((a, b) => b.score - a.score || a.hash.localeCompare(b.hash))
@@ -225,7 +226,7 @@ export function vectorsFor(db: DB, space: Pick<EmbeddingSpace, "id" | "dim">, ha
   const uniq = [...new Set(hashes)];
   for (let i = 0; i < uniq.length; i += 500) {
     const part = uniq.slice(i, i + 500);
-    const rows = db.prepare(`SELECT content_hash AS hash, f FROM vec.vectors WHERE space_id = ? AND content_hash IN (${part.map(() => "?").join(",")})`).all(space.id, ...part) as { hash: string; f: Buffer }[];
+    const rows = db.prepare(`SELECT content_hash AS hash, f FROM vec.vectors WHERE space_id = ? AND content_hash IN ${IN_JSON}`).all(space.id, jsonList(part)) as { hash: string; f: Buffer }[];
     for (const r of rows) out.set(r.hash, fromBlob(r.f));
   }
   return out;

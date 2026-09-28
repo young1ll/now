@@ -7,7 +7,7 @@ import { executeSession } from "@/lib/ai/runtime";
 import { today } from "@/lib/dates";
 import { maybeCurate } from "@/lib/knowledge/curator";
 import { embedPending } from "@/lib/knowledge/embedder";
-import { indexPending } from "@/lib/knowledge/indexer";
+import { indexPendingAsync } from "@/lib/knowledge/indexer";
 import { gcVectors } from "@/lib/knowledge/vectors";
 import { executeAction } from "@/lib/ontology/execute";
 import { computeSignals } from "@/lib/ontology/signals";
@@ -192,6 +192,9 @@ export const DEFAULT_PROMPT = `다음 이벤트가 발생했다. 운영 에이�
 {{event_json}}`;
 
 
+/** 시스템이 채우는 이벤트 필드 — 템플릿에서 펜스 없이 치환한다 (그 밖의 event.* 는 <event-data> 로 감싼다) */
+const TRUSTED_EVENT_PATHS = new Set(["event.id", "event.type", "event.created_at", "event.subject_type", "event.subject_id", "event.actor_type", "event.actor_id"]);
+
 /**
  * 템플릿 치환 (한 번만 — 치환된 값 안의 {{…}} 는 다시 해석하지 않는다). 이벤트 데이터는 신뢰할 수 없는 블록으로 감싼다.
  * {{trigger.last_fired_at}} = 이 트리거의 이전 발화 시각 (처음이면 빈 값) — runAgent 가 이번 발화 전의 값으로 넘긴다.
@@ -202,7 +205,11 @@ export function renderPrompt(template: string, e: NowEvent | undefined, t: Trigg
     // '<' 는 \u003c 로 — 페이로드 속 '</event-data>' 가 블록을 일찍 닫아 지시문이 블록 밖(신뢰 영역)으로 새지 않게 (JSON 으로는 같은 값)
     if (path === "event_json") return `<event-data>\n${JSON.stringify(e ?? {}, null, 2).replace(/</g, "\\u003c")}\n</event-data>`;
     const v = path.split(".").reduce<unknown>((o, k) => (o && typeof o === "object" ? (o as Record<string, unknown>)[k] : undefined), ctx);
-    return v === undefined || v === null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v);
+    const text = v === undefined || v === null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v);
+    // 이벤트의 값(페이로드 — 업무 제목·요약처럼 누구든 쓸 수 있는 텍스트)도 데이터 펜스 안에만 — 신뢰 영역에 원문으로 넣지 않는다.
+    // '<' 는 전각으로 바꿔 값이 펜스를 닫지 못하게 한다. 유형·id·시각 같은 시스템 필드와 trigger.* 는 그대로.
+    if (path.startsWith("event.") && !TRUSTED_EVENT_PATHS.has(path)) return text ? `<event-data>${text.replace(/</g, "＜")}</event-data>` : "";
+    return text;
   });
   return `${UNTRUSTED_NOTE}\n\n${body}`;
 }
@@ -367,7 +374,8 @@ export async function tick(db: DB, opts: WorkerOpts & { signals?: boolean; sched
   if (opts.index !== false) {
     // 검색 색인은 파생 데이터 — 실패해도 트리거 처리를 막지 않고 다음 틱에 다시 시도한다
     try {
-      const r = indexPending(db, now);
+      // 스윕은 묶음마다 커밋하고 이벤트 루프를 내준다 (워커는 Next 서버 안에서 돈다 — 요청을 막지 않게)
+      const r = await indexPendingAsync(db, now);
       out.indexed = r.changed;
       // 시간당 전체 스윕 때 벡터도 정리 (사라진 청크 · 폐기된 공간)
       if (r.mode === "sweep") gcVectors(db);

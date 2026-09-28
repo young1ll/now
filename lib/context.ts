@@ -1,5 +1,7 @@
 import { cookies } from "next/headers";
+import { cache } from "react";
 import { db } from "@/lib/db";
+import { computeSignals } from "@/lib/ontology/signals";
 import { getBusiness, listBusinesses } from "@/lib/repos/businesses";
 import type { Scope } from "@/lib/repos/scope";
 
@@ -18,3 +20,6 @@ export async function currentScope(): Promise<Scope> {
 export async function defaultBusinessId(): Promise<number | undefined> {
   return (await currentScope()) ?? listBusinesses(db())[0]?.id;
 }
+
+/** 요청 한 번 안에서 신호 계산은 한 번만 (레이아웃의 배지 수 + 홈 화면의 신호 표) */
+export const requestSignals = cache((scope: Scope, on: string) => computeSignals(db(), scope, on));

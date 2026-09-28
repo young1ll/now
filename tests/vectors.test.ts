@@ -417,6 +417,21 @@ describe("업그레이드 · 장애 경로", () => {
     assert.equal(getSetting(db, "index_format"), INDEX_FORMAT);
   });
 
+  it("질의 임베딩도 비밀값을 가린 뒤 보낸다 (recall · get_context 의 task)", async () => {
+    const { db, fetchImpl } = setup();
+    const id = createSpace(db);
+    await fillAll(db, fetchImpl);
+    run(db, "embedding.activate", { id });
+    fetchImpl.calls.length = 0;
+    const secrets = ["sk-ant-api03-ABCDEFGHIJKLMNOPqrstu", "AKIAIOSFODNN7EXAMPLQ", "Hunter2Hunter2Zq", "nows_SeSsIoNtOkEn12345678"];
+    await recall(db, { query: `이 키 ${secrets[0]} 어디 쓰였나 ${secrets[1]}`, k: 5 }, { fetchImpl });
+    await recall(db, { query: `DB 접속 DB_PASSWORD=${secrets[2]} 확인 ${secrets[3]}`, k: 5 }, { fetchImpl });
+    const sent = fetchImpl.calls.flatMap((c) => c.body.input).join("\n");
+    assert.equal(fetchImpl.calls.length, 2);
+    for (const s of secrets) assert.ok(!sent.includes(s), sent);
+    assert.ok(sent.includes(REDACTED));
+  });
+
   it("embedPending 은 보내기 직전에 한 번 더 가린다 (재색인 전 청크가 남아 있어도)", async () => {
     const { db, fetchImpl } = setup();
     const raw = "남은 청크 GITHUB_TOKEN=ghp_abcdef1234567890 nows_Zx9Yw8Vu7Ts6";

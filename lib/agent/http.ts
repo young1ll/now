@@ -15,7 +15,9 @@ export async function agentTool(req: Request, tool: string, args: (actor: Actor)
     return json(await callTool(db(), auth.actor, tool, await args(auth.actor)));
   } catch (e) {
     if (e instanceof ToolError) return json({ error: e.message }, 400);
-    throw e;
+    // 예상하지 못한 오류: 서버 로그에 남기고, 에이전트에게는 빈 500 대신 JSON 오류를 준다 (내부 메시지는 싣지 않는다)
+    console.error(`[now-api] ${tool}`, e);
+    return json({ error: "내부 오류 — 요청을 처리하지 못했습니다" }, 500);
   }
 }
 

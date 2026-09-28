@@ -3,6 +3,7 @@
 // (바뀔 때마다 재색인·재임베딩 비용이 들고, 검색 신호로는 잡음이다).
 import crypto from "node:crypto";
 import type { DB } from "@/lib/db";
+import { IN_JSON, jsonList } from "@/lib/db/sql";
 import { CLIENT_KIND, CLIENT_STATUS, INTERACTION_KIND, INVOICE_STATUS, MEMORY_KIND, MEMORY_ORIGIN, MEMORY_STATUS, NOTE_KIND, PRIORITY, RECURRENCE, TASK_STATUS } from "@/lib/labels";
 import { displayId } from "@/lib/ontology/ids";
 import { OBJECTS } from "@/lib/ontology/objects";
@@ -104,7 +105,7 @@ function titlesOf(db: DB, refs: Ref[]): Map<string, string> {
   for (const type of new Set(refs.map((r) => r.type))) {
     const ids = [...new Set(refs.filter((r) => r.type === type).map((r) => r.id))];
     if (!ids.length) continue;
-    for (const r of db.prepare(`SELECT * FROM (${TITLE_SQL[type]}) WHERE id IN (${ids.map(() => "?").join(",")})`).all(...ids) as { id: number; t: string }[]) {
+    for (const r of db.prepare(`SELECT * FROM (${TITLE_SQL[type]}) WHERE id IN ${IN_JSON}`).all(jsonList(ids)) as { id: number; t: string }[]) {
       out.set(`${type}:${r.id}`, r.t);
     }
   }
@@ -115,7 +116,7 @@ function header(type: ObjectType, id: number, title: string, status?: string) {
   return `[${OBJECTS[type].label}] ${displayId(type, id)} ${title}${status ? ` · ${status}` : ""}`;
 }
 
-const inClause = (ids?: number[]) => (ids ? `WHERE x.id IN (${ids.map(() => "?").join(",") || "NULL"})` : "");
+const inClause = (ids?: number[]) => (ids ? `WHERE x.id IN ${IN_JSON}` : "");
 
 type Row = Record<string, unknown> & { id: number };
 
@@ -126,7 +127,7 @@ export function renderOwners(db: DB, type: ObjectType, ids?: number[]): Map<numb
   const out = new Map<number, OwnerDoc>();
   // 기억 카드는 링크를 대상·근거 줄로 따로 그린다 — 사용자 정의 링크 줄(linkLines)을 쓰지 않으므로 읽지 않는다
   const links = type === "memory" ? new Map<number, CustomLink[]>() : customLinks(db, type);
-  const q = (sql: string) => db.prepare(`${sql} ${inClause(ids)}`).all(...(ids ?? [])) as Row[];
+  const q = (sql: string) => db.prepare(`${sql} ${inClause(ids)}`).all(...(ids ? [jsonList(ids)] : [])) as Row[];
   const linkLines = (id: number) => (links.get(id) ?? []).map((l) => `${l.label}: ${l.other}${l.note ? ` (${l.note})` : ""}`);
   const put = (id: number, businessId: number | null, chunks: string[]) => out.set(id, { ref: { type, id }, businessId, chunks });
 

@@ -2,6 +2,7 @@
 // 사람이 말한 것은 곧바로 verified, 에이전트가 추론한 것은 proposed. 정정은 수정이 아니라 대체(새 행 + 이전 행 superseded).
 // 중복은 어휘로만 합친다 (의미 유사 중복은 M4 큐레이터가 벡터로 — 액션은 동기라 여기선 임베딩을 부르지 않는다).
 import type { DB } from "@/lib/db";
+import { PAIRS_JSON, refPairs } from "@/lib/db/sql";
 import { redactSecrets } from "@/lib/knowledge/redact";
 import { MEMORY_KIND } from "@/lib/labels";
 import { emitEvent } from "@/lib/repos/events";
@@ -153,11 +154,11 @@ export function findDuplicate(db: DB, q: { businessId: number | null; about: Ref
   const norm = normalizeStatement(q.statement);
   // about 겹침은 SQL 에서: 대상이 있으면 그 대상 중 하나를 가리키는 기억, 없으면 대상이 없는 기억만 후보
   const aboutCond = q.about.length
-    ? `id IN (SELECT from_id FROM links WHERE link_type = 'about' AND from_type = 'memory' AND (${q.about.map(() => "(to_type = ? AND to_id = ?)").join(" OR ")}))`
+    ? `id IN (SELECT from_id FROM links WHERE link_type = 'about' AND from_type = 'memory' AND (to_type, to_id) IN ${PAIRS_JSON})`
     : "NOT EXISTS (SELECT 1 FROM links l WHERE l.link_type = 'about' AND l.from_type = 'memory' AND l.from_id = memories.id)";
   const rows = db
     .prepare(`SELECT * FROM memories WHERE business_id IS ? AND status IN (${LIVE_STATUSES.map(() => "?").join(",")}) AND ${aboutCond} ORDER BY id`)
-    .all(q.businessId, ...LIVE_STATUSES, ...q.about.flatMap((r) => [r.type, r.id])) as Memory[];
+    .all(q.businessId, ...LIVE_STATUSES, ...(q.about.length ? [refPairs(q.about)] : [])) as Memory[];
   let best: { m: Memory; score: number } | undefined;
   for (const m of rows) {
     if (q.excludeIds?.includes(m.id)) continue;
@@ -211,13 +212,16 @@ function parseRefs(db: DB, list: string[] | undefined, what: string): Ref[] {
  * null 도 "지정 안 함"이다: 사람 폼의 빈 선택('— 없음 —')은 null 로 들어오고, 필드 도움말대로 추론해야 한다.
  * (대상이 한 사업에만 있는데 전역으로 두고 싶은 경우는 드물다 — 대상 없이 기록하면 전역이 된다.)
  */
-function resolveBusiness(db: DB, given: number | null | undefined, about: Ref[]): number | null {
+function resolveBusiness(db: DB, given: number | null | undefined, about: Ref[], evidence: Ref[] = []): number | null {
   if (given != null) {
     checkBusiness(db, given);
     return given;
   }
-  const info = nodeInfo(db, about);
-  const ids = new Set(about.map((r) => (r.type === "business" ? r.id : (info.get(refKey(r))?.businessId ?? null))).filter((x): x is number => x !== null));
+  // 대상이 없으면 근거의 사업을 본다 — 근거가 한 사업에 있는 기억을 전역으로 두면, 기억 카드의 "근거:" 줄(고객명·청구서 번호)이
+  // 다른 사업 범위의 에이전트에게 공용으로 보인다
+  const from = about.length ? about : evidence;
+  const info = nodeInfo(db, from);
+  const ids = new Set(from.map((r) => (r.type === "business" ? r.id : (info.get(refKey(r))?.businessId ?? null))).filter((x): x is number => x !== null));
   return ids.size === 1 ? [...ids][0] : null;
 }
 
@@ -256,15 +260,22 @@ function liveContradictions(db: DB, id: number, exclude: number[] = []): number[
 const humanVouched = (m: Pick<Memory, "status" | "verified_at" | "pinned">) => m.status === "verified" || !!m.verified_at || !!m.pinned;
 
 /**
+ * 나중에 붙은 근거·합쳐진 기억의 오염이 이 기억으로 번지는가 — 사람이 확인·고정한 기억(humanVouched)은 새 근거로 흔들지 않는다.
+ * 중복 보강(memory.propose/record) · link.create evidenced_by · memory.merge 가 같은 규칙을 쓴다.
+ */
+export const absorbsTaint = (m: Pick<Memory, "status" | "verified_at" | "pinned" | "tainted">) => !m.tainted && !humanVouched(m);
+
+/**
  * 충돌 표시: contradicts 링크 + 양쪽 disputed + memory.disputed 이벤트.
- * 에이전트의 제안은 사람이 확인한(verified) 기억의 상태를 바꾸지 못한다 — 상대든 자기 자신이든(중복 보강 경로에서는
+ * 에이전트의 제안은 사람이 확인한 기억(verified · 확인된 적 있음 · 고정)의 상태를 바꾸지 못한다 — 상대든 자기 자신이든(중복 보강 경로에서는
  * self 가 기존 기억이다). 그 기억은 상태를 유지하고, 링크·이벤트·신호로 사람에게 알린다.
  */
 function markConflicts(ctx: ActionCtx, id: number, others: Memory[]): number[] {
   const { db, actor } = ctx;
   const touched: number[] = [];
   const self = getMemory(db, id)!;
-  const keep = (m: Memory) => actor.type === "agent" && m.status === "verified";
+  // 사람이 확인·고정한 기억(humanVouched — correct·merge·retire 의 고위험 판정과 같은 정의)은 에이전트의 제안이 끌어내리지 못한다
+  const keep = (m: Memory) => actor.type === "agent" && humanVouched(m);
   for (const o of others) {
     if (o.id === id) continue;
     addMemoryLink(db, "contradicts", id, memRef(o.id));
@@ -295,7 +306,7 @@ const common = {
   kind: kindField,
   about: f.refs("대상", { max: 5, help: "이 기억이 무엇에 관한 것인가 — 객체 참조 최대 5개 ([\"client:3\"])" }),
   evidence: f.refs("근거", { max: 10, help: "이 기억을 뒷받침하는 객체 (접촉 이력이 있는 고객·청구서·문서·다른 기억) — 에이전트는 1개 이상 필수" }),
-  business_id: f.ref("사업", "business", { nullable: true, help: "비우면 대상의 사업에서 추론 (여러 사업이거나 대상이 없으면 전역)" }),
+  business_id: f.ref("사업", "business", { nullable: true, help: "비우면 대상(대상이 없으면 근거)의 사업에서 추론 (여러 사업이거나 둘 다 없으면 전역)" }),
   confidence: f.number("신뢰도", { min: 0, max: 1, help: "0~1 자기평가 (기본: 사람 0.9 · 에이전트 0.5)" }),
   valid_from: f.date("유효 시작"),
   valid_to: f.date("유효 종료"),
@@ -325,7 +336,7 @@ function remember(ctx: ActionCtx, i: RememberInput, mode: "propose" | "record"):
   if (!isHuman(actor) && !evidence.length) throw new ActionError("에이전트의 기억 제안에는 근거(evidence)가 1개 이상 필요합니다 — 이 기억을 뒷받침하는 객체 참조");
   if (i.valid_from && i.valid_to && i.valid_from > i.valid_to) throw new ActionError("유효 시작이 유효 종료보다 늦습니다");
   const explicit = (i.contradicts ?? []).map((id) => live(db, id, `충돌 기억 ${MEM(id)}`));
-  const businessId = resolveBusiness(db, i.business_id, about);
+  const businessId = resolveBusiness(db, i.business_id, about, evidence);
   // 오염은 되돌릴 수 없다: 입력이 false 여도 근거에서 물려받은 오염은 유지
   const tainted = !!i.tainted || inheritsTaint(db, evidence);
 
@@ -336,8 +347,8 @@ function remember(ctx: ActionCtx, i: RememberInput, mode: "propose" | "record"):
     const confirm = isHuman(actor) && dup.status !== "verified";
     updateMemory(db, dup.id, {
       confidence: Math.min(1, Math.round((dup.confidence + 0.1) * 100) / 100),
-      // 오염은 보강에도 따라간다 (입력 표시 · 오염된 근거). 이미 사람이 확인한 문장은 새 근거로 흔들지 않는다 (memory.merge 와 같은 규칙)
-      ...(tainted && !dup.tainted && dup.status !== "verified" ? { tainted: 1 } : {}),
+      // 오염은 보강에도 따라간다 (입력 표시 · 오염된 근거). 사람이 확인·고정한 기억은 새 근거로 흔들지 않는다 (absorbsTaint — memory.merge · link.create 와 같은 규칙)
+      ...(tainted && absorbsTaint(dup) ? { tainted: 1 } : {}),
       ...(confirm ? { status: "verified", verified_by: verifier(actor), verified_at: new Date().toISOString() } : {}),
     });
     const conflicts = markConflicts(ctx, dup.id, explicit);
@@ -585,7 +596,7 @@ export const memoryActions = [
       updateMemory(db, into.id, {
         confidence: Math.max(from.confidence, into.confidence),
         use_count: into.use_count + from.use_count,
-        ...(from.tainted && into.status !== "verified" ? { tainted: 1 } : {}),
+        ...(from.tainted && absorbsTaint(into) ? { tainted: 1 } : {}),
         ...(from.pinned && (into.status === "verified" || into.status === "active") ? { pinned: 1 } : {}),
       });
       updateMemory(db, from.id, { status: "superseded", superseded_by_id: into.id, pinned: 0, retired_reason: `${MEM(into.id)} 로 합침` });

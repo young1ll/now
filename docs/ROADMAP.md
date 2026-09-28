@@ -1,6 +1,6 @@
 # 로드맵
 
-## v0.2 (현재) — AI 운영 계층
+## v0.2 — AI 운영 계층
 - [x] 온톨로지 · 액션 · 정책 · 감사 (단일 관문)
 - [x] MCP(HTTP/stdio) · REST · 에이전트 토큰 관리
 - [x] 승인함 · 활동 로그 · 신호 큐 · AI 운영 모드 4단계
@@ -16,7 +16,7 @@
 - [x] 온톨로지: 스키마 데이터화, 1급 링크, 링크 유형 정의, 그래프 탐색 UI, Neo4j 동기화
 - [x] 열 기반 UI (목록 │ 선택 │ 연결, 너비 조정·기억)
 
-## 다음 (v0.4) — 기억 · 지식 · 검색 ([설계](MEMORY.md))
+## v0.4 (현재) — 기억 · 지식 · 검색 ([설계](MEMORY.md))
 - [x] M1 검색 기반: 청크·객체 카드, 하이브리드 `recall` (FTS + 그래프), 골든셋 `eval:recall`, `/search` · MCP `recall` · `now recall`
 - [x] M2 벡터: sqlite-vec (bit→float 재정렬), 로컬 우선 임베딩(Ollama · OpenAI · Gemini · Voyage · OpenAI 호환), 임베딩 공간 교체, 색인 비밀값 가림, `eval:recall --embed-url · --vec-bench`
 - [x] M3 기억: `memory` 객체 · 상태 기계 · 액션 10종 · 어휘 중복/숫자 충돌 · 오염 상속 · 컨텍스트 팩(세션 해시·인용 추적) · `/memory` · "AI 가 아는 것" · MCP `get_context`·`remember`·`cite`·`list_memories` · `now context`·`remember`·`memories`

@@ -23,7 +23,8 @@ export function sumByCurrency<T>(rows: T[], currency: (r: T) => string, amount: 
   return [...m].map(([currency, amount]) => ({ currency, amount }));
 }
 
-export function opsOverview(db: DB, scope: Scope, on = today()) {
+/** signals: 이미 계산한 신호가 있으면 (같은 요청의 레이아웃이 계산한 것) 다시 계산하지 않는다 */
+export function opsOverview(db: DB, scope: Scope, on = today(), signals?: ReturnType<typeof computeSignals>) {
   const since24h = new Date(Date.now() - 86_400_000).toISOString();
   const ar = receivables(db, scope, on);
   const month = monthOf(on);
@@ -32,7 +33,7 @@ export function opsOverview(db: DB, scope: Scope, on = today()) {
   return {
     on,
     aiMode: getAiMode(db),
-    signals: computeSignals(db, scope, on),
+    signals: signals ?? computeSignals(db, scope, on),
     pending: { count: pendingCount(db), runs: listRuns(db, { status: "pending", limit: 20 }) },
     runs24h: runStats(db, since24h),
     /** 자율도: 최근 7일 에이전트 쓰기 — 바로 적용 · 자율 권한 · 승인 후 적용 · 거절 */

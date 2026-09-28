@@ -2,6 +2,7 @@
 // (docs/MEMORY.md §5). 벡터는 캐시다: 활성 공간이 없거나, 벡터가 꺼졌거나, 질의 임베딩이 실패하면
 // 의미 목록만 빠지고 어휘 + 관계로 그대로 동작한다 (실패는 degraded 로 알린다).
 import type { DB } from "@/lib/db";
+import { IN_JSON, jsonList } from "@/lib/db/sql";
 import { edgesOf, nodeInfo, parseRef } from "@/lib/ontology/graph";
 import { OBJECT_TYPES, type ObjectType, type Ref, refKey } from "@/lib/ontology/types";
 import { activeSpace } from "@/lib/repos/embeddings";
@@ -86,18 +87,24 @@ const TYPE_WORDS: Record<string, ObjectType> = {
   문서: "note", 노트: "note", 메모: "note", 지출: "expense", 비용: "expense", 에이전트: "agent", 사업: "business", 기억: "memory",
 };
 
+/** 질의당 검색어·객체 참조 상한 — 긴 질의(붙여 넣은 문서)가 SQL 식 깊이·비용을 키우지 않게. 앞에서부터 쓴다 */
+export const MAX_TERMS = 64;
+export const MAX_QUERY_REFS = 32;
+
 /** 검색어 → (원형, 조사·어미 뗀 형태). 둘 중 하나만 맞아도 일치로 본다 (명사 끝 글자가 조사처럼 생긴 경우 대비). */
 export function analyze(query: string): { terms: Term[]; refs: Ref[]; typeHint?: ObjectType } {
   const refs: Ref[] = [];
   const terms: Term[] = [];
   const seen = new Set<string>();
-  for (const raw of query.normalize("NFKC").split(/[\s,.;!?"'`()[\]{}<>/\\|]+/)) {
+  // 제어 문자(NUL 등)는 구분자로 — FTS MATCH 구문에 들어가면 SQLite 가 문자열을 끝내지 못한다
+  for (const raw of query.normalize("NFKC").replace(/\p{Cc}/gu, " ").split(/[\s,.;!?"'`()[\]{}<>/\\|]+/)) {
     if (!raw) continue;
     const r = parseRef(raw);
     if (r) {
-      refs.push(r);
+      if (refs.length < MAX_QUERY_REFS) refs.push(r);
       continue;
     }
+    if (terms.length >= MAX_TERMS) continue;
     const w = raw.toLowerCase().replace(/^[-:#*]+|[-:#*]+$/g, "");
     if (!w || STOP.has(w)) continue;
     const base = strip(strip(w, ENDINGS), JOSA);
@@ -183,15 +190,16 @@ function lexical(db: DB, terms: Term[], scope: Scope | undefined, types?: Object
   if (long.length) for (const id of ftsQuery(db, "chunks_fts", long.map(phrase).join(" OR "), scope, POOL_PER_QUERY)) pool.add(id);
   if (short.length && !small) for (const id of ftsQuery(db, "chunks_words", short.map((f) => `${phrase(f)}*`).join(" OR "), scope, POOL_PER_QUERY)) pool.add(id);
   if (short.length && small) {
-    const where = short.map(() => "text LIKE ? ESCAPE '\\'").join(" OR ");
-    for (const r of db.prepare(`SELECT id FROM chunks WHERE (${where})${sc} LIMIT ${POOL_PER_QUERY}`).all(...short.map(likeOf), ...sp) as { id: number }[]) pool.add(r.id);
+    // 검색어마다 따로 (OR 로 이어 붙이면 검색어가 많을 때 SQL 식 깊이 한도에 걸린다 — SQL 문도 검색어 수와 상관없이 같다)
+    const stmt = db.prepare(`SELECT id FROM chunks WHERE text LIKE ? ESCAPE '\\'${sc} LIMIT ${POOL_PER_QUERY}`);
+    for (const f of short) for (const r of stmt.all(likeOf(f), ...sp) as { id: number }[]) pool.add(r.id);
   }
   if (!pool.size) return [];
   const ids = [...pool];
   const rows: ChunkRow[] = [];
   for (let i = 0; i < ids.length; i += 500) {
     const part = ids.slice(i, i + 500);
-    rows.push(...(db.prepare(`SELECT id, owner_type, owner_id, business_id, seq, text FROM chunks WHERE id IN (${part.map(() => "?").join(",")})`).all(...part) as ChunkRow[]));
+    rows.push(...(db.prepare(`SELECT id, owner_type, owner_id, business_id, seq, text FROM chunks WHERE id IN ${IN_JSON}`).all(jsonList(part)) as ChunkRow[]));
   }
   const owners = new Map<string, Lexical & { hits: number }>();
   for (const c of rows) {
@@ -279,8 +287,8 @@ async function semantic(db: DB, query: string, scope: Scope | undefined, types: 
     const [sc, sp] = scopeSql(scope);
     const hashes = near.map((n) => n.hash);
     rows = db
-      .prepare(`SELECT id, owner_type, owner_id, business_id, seq, text, content_hash FROM chunks WHERE content_hash IN (${hashes.map(() => "?").join(",")})${sc}`)
-      .all(...hashes, ...sp) as (ChunkRow & { content_hash: string })[];
+      .prepare(`SELECT id, owner_type, owner_id, business_id, seq, text, content_hash FROM chunks WHERE content_hash IN ${IN_JSON}${sc}`)
+      .all(jsonList(hashes), ...sp) as (ChunkRow & { content_hash: string })[];
   } catch (e) {
     return { list: [], vector, degraded: `벡터 검색 실패 — ${e instanceof Error ? e.message : String(e)}` };
   }
@@ -360,7 +368,7 @@ function noteStates(db: DB, ids: number[]): Map<number, NoteState> {
   const out = new Map<number, NoteState>();
   for (let i = 0; i < ids.length; i += 500) {
     const part = ids.slice(i, i + 500);
-    for (const r of db.prepare(`SELECT id, kind, tainted FROM notes WHERE id IN (${part.map(() => "?").join(",")})`).all(...part) as (NoteState & { id: number })[]) out.set(r.id, r);
+    for (const r of db.prepare(`SELECT id, kind, tainted FROM notes WHERE id IN ${IN_JSON}`).all(jsonList(part)) as (NoteState & { id: number })[]) out.set(r.id, r);
   }
   return out;
 }
@@ -369,7 +377,7 @@ function memoryStates(db: DB, ids: number[]): Map<number, MemState> {
   const out = new Map<number, MemState>();
   for (let i = 0; i < ids.length; i += 500) {
     const part = ids.slice(i, i + 500);
-    for (const r of db.prepare(`SELECT id, status, tainted, kind FROM memories WHERE id IN (${part.map(() => "?").join(",")})`).all(...part) as (MemState & { id: number })[]) out.set(r.id, r);
+    for (const r of db.prepare(`SELECT id, status, tainted, kind FROM memories WHERE id IN ${IN_JSON}`).all(jsonList(part)) as (MemState & { id: number })[]) out.set(r.id, r);
   }
   return out;
 }
@@ -385,7 +393,7 @@ function seedsOf(refs: Ref[], ...lists: { ref: Ref }[][]): Ref[] {
 
 export async function recall(db: DB, q: RecallQuery, o: RecallOpts = {}): Promise<RecallResult> {
   const t0 = performance.now();
-  ensureIndexed(db);
+  const index = ensureIndexed(db);
   const k = Math.min(Math.max(q.k ?? 10, 1), 100);
   const mode = q.mode ?? "hybrid";
   const { terms, refs, typeHint } = analyze(q.query);
@@ -498,6 +506,8 @@ export async function recall(db: DB, q: RecallQuery, o: RecallOpts = {}): Promis
     terms: terms.map((t) => t.text),
     tookMs: Math.round((performance.now() - t0) * 10) / 10,
     vector: sem.vector,
-    ...(sem.degraded ? { degraded: sem.degraded } : {}),
+    ...(sem.degraded || index === "building"
+      ? { degraded: [index === "building" ? "검색 색인을 만드는 중 — 결과가 불완전할 수 있습니다" : "", sem.degraded ?? ""].filter(Boolean).join(" · ") }
+      : {}),
   };
 }

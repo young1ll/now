@@ -30,7 +30,7 @@ export async function POST(req: Request) {
   const parsed = Body.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return json({ error: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") }, 400);
   const s = parsed.data;
-  const base = { action: "iac.record_snapshot", actor: auth.actor, risk: "low" as const, params: { status: s.status, tool: s.tool, captured_at: s.captured_at } };
+  const base = { action: "iac.record_snapshot", actor: auth.actor, risk: "low" as const, params: { status: s.status, tool: s.tool, captured_at: s.captured_at }, businessIds: [] as number[] };
   // 허용 범위: 액션 레지스트리 밖의 쓰기지만 에이전트의 allowed_actions 로 다스린다 (좁힌 에이전트가 드리프트 신호를 바꾸지 못하게)
   const agent = getAgent(d, Number(auth.actor.id));
   const denied = agent ? allowedDenial(agent, base.action) : "에이전트를 찾을 수 없습니다";

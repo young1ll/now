@@ -70,7 +70,7 @@ export function getAgent(db: DB, id: number): Agent | undefined {
   return db.prepare("SELECT * FROM agents WHERE id = ?").get(id) as Agent | undefined;
 }
 
-export function listAgents(db: DB, since: string): AgentRow[] {
+export function listAgents(db: DB, since: string, id?: number): AgentRow[] {
   return db
     .prepare(
       `SELECT a.id, a.name, a.description, a.token_prefix, a.status, a.created_at, a.last_seen_at,
@@ -79,9 +79,9 @@ export function listAgents(db: DB, since: string): AgentRow[] {
          (SELECT COUNT(*) FROM action_runs r WHERE r.actor_type = 'agent' AND r.actor_id = CAST(a.id AS TEXT) AND r.status = 'pending') AS pending,
          (SELECT COUNT(*) FROM action_runs r WHERE r.actor_type = 'agent' AND r.actor_id = CAST(a.id AS TEXT) AND r.status IN ('failed','denied') AND r.created_at >= ?) AS failed_24h,
          (SELECT MAX(created_at) FROM action_runs r WHERE r.actor_type = 'agent' AND r.actor_id = CAST(a.id AS TEXT)) AS last_run_at
-       FROM agents a LEFT JOIN businesses b ON b.id = a.business_scope ORDER BY a.status = 'revoked', a.id`,
+       FROM agents a LEFT JOIN businesses b ON b.id = a.business_scope ${id !== undefined ? "WHERE a.id = ?" : ""} ORDER BY a.status = 'revoked', a.id`,
     )
-    .all(since, since) as AgentRow[];
+    .all(since, since, ...(id !== undefined ? [id] : [])) as AgentRow[];
 }
 
 export function setAgentStatus(db: DB, id: number, status: AgentStatus) {

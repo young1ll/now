@@ -43,10 +43,14 @@ export type Interaction = {
 export function listClients(
   db: DB,
   scope: Scope,
-  filter: { status?: ClientStatus; q?: string } = {},
+  filter: { status?: ClientStatus; q?: string; /** 한 고객만 (객체 상세 — 목록 전체를 만들지 않는다) */ id?: number } = {},
 ): ClientRow[] {
   const [where, params] = scopeWhere(scope, "c.business_id");
   const conds = [where];
+  if (filter.id !== undefined) {
+    conds.push("c.id = ?");
+    params.push(filter.id);
+  }
   if (filter.status) {
     conds.push("c.status = ?");
     params.push(filter.status);

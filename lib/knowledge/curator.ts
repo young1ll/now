@@ -3,6 +3,7 @@
 // 모든 변경은 SYSTEM 행위자의 액션(memory.retire · memory.merge)으로 — 감사 로그에 규칙이 사유로 남는다.
 // 워커가 시간당 1회 부른다 (settings.curator_last_run 조건부 갱신으로 점유 — 여러 프로세스가 돌아도 한 번).
 import type { DB } from "@/lib/db";
+import { IN_JSON, PAIRS_JSON, jsonList, refPairs } from "@/lib/db/sql";
 import { toYmd } from "@/lib/dates";
 import { executeAction } from "@/lib/ontology/execute";
 import { useSince, promotionSignal } from "@/lib/ontology/signals";
@@ -86,7 +87,7 @@ function cardHashes(db: DB, ids: number[]): Map<number, string> {
   const out = new Map<number, string>();
   for (let i = 0; i < ids.length; i += 500) {
     const part = ids.slice(i, i + 500);
-    for (const r of db.prepare(`SELECT owner_id AS id, content_hash AS h FROM chunks WHERE owner_type = 'memory' AND seq = 0 AND owner_id IN (${part.map(() => "?").join(",")})`).all(...part) as { id: number; h: string }[]) out.set(r.id, r.h);
+    for (const r of db.prepare(`SELECT owner_id AS id, content_hash AS h FROM chunks WHERE owner_type = 'memory' AND seq = 0 AND owner_id IN ${IN_JSON}`).all(jsonList(part)) as { id: number; h: string }[]) out.set(r.id, r.h);
   }
   return out;
 }
@@ -94,11 +95,11 @@ function cardHashes(db: DB, ids: number[]): Map<number, string> {
 /** 같은 사업 범위 · about 이 겹치는(둘 다 없으면 둘 다 없는) 살아 있는 기억 (disputed 제외 — 충돌은 사람이 푼다). 같은 about 묶음끼리 한 번만 읽는다 */
 function peers(db: DB, businessId: number | null, about: Ref[]): Memory[] {
   const aboutCond = about.length
-    ? `id IN (SELECT from_id FROM links WHERE link_type = 'about' AND from_type = 'memory' AND (${about.map(() => "(to_type = ? AND to_id = ?)").join(" OR ")}))`
+    ? `id IN (SELECT from_id FROM links WHERE link_type = 'about' AND from_type = 'memory' AND (to_type, to_id) IN ${PAIRS_JSON})`
     : "NOT EXISTS (SELECT 1 FROM links l WHERE l.link_type = 'about' AND l.from_type = 'memory' AND l.from_id = memories.id)";
   return db
     .prepare(`SELECT * FROM memories WHERE business_id IS ? AND status IN ('proposed','active','verified') AND ${aboutCond} ORDER BY id`)
-    .all(businessId, ...about.flatMap((r) => [r.type, r.id])) as Memory[];
+    .all(businessId, ...(about.length ? [refPairs(about)] : [])) as Memory[];
 }
 
 /** c 의 미룬 기억 (벡터가 아직 없음 · 실행당 상한 초과) — 다음 실행이 이어받는다. 큐레이터 자신의 진행 상태라 액션이 아니다 (curator_last_run 과 같은 취급) */

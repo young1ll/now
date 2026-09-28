@@ -82,7 +82,7 @@ export default async function MemoryPage({ searchParams }: { searchParams: Searc
           </>
         }
       />
-      <div className="flex border-b border-line bg-panel text-[12px]">
+      <div className="flex flex-wrap border-b border-line bg-panel text-[12px]">
         {[
           ["검토 대기", stats.review, stats.review ? "text-warning-fg" : ""],
           ["충돌", stats.disputed, stats.disputed ? "text-danger-fg" : ""],
@@ -90,7 +90,7 @@ export default async function MemoryPage({ searchParams }: { searchParams: Searc
           ["고정", stats.pinned, ""],
           ["보관", stats.superseded + stats.retired, "text-fg-3"],
         ].map(([label, n, cls]) => (
-          <div key={String(label)} className="border-r border-line px-4 py-1.5">
+          <div key={String(label)} className="shrink-0 border-r border-line px-4 py-1.5 whitespace-nowrap">
             <span className="label-caps mr-2">{label}</span>
             <span className={`mono font-semibold ${cls}`}>{n}</span>
           </div>
@@ -353,7 +353,8 @@ async function MemoryRelated({ id, scope }: { id: number; scope: number | null }
 
 /** 큐레이터(결정적 정리) 마지막 실행 — curator.ran 이벤트 */
 function CuratorStatus({ run }: { run: ReturnType<typeof lastCuratorRun> }) {
-  if (!run) return <div className="ml-auto px-4 py-1.5 text-fg-3"><span className="label-caps mr-2">큐레이터</span>아직 실행 전 (워커가 시간마다)</div>;
+  // 좁은 화면에서는 다음 줄 전체 (상태 칸과 한 줄에 억지로 넣으면 글자 단위로 세로로 무너진다)
+  if (!run) return <div className="basis-full border-t border-line px-4 py-1.5 text-fg-3 md:ml-auto md:basis-auto md:border-t-0"><span className="label-caps mr-2 whitespace-nowrap">큐레이터</span>아직 실행 전 (워커가 시간마다)</div>;
   const p = run.payload as { expired_unused?: number; expired_valid_to?: number; merged?: number; promotable?: number; merge_disabled?: boolean; errors?: number };
   const parts = [
     `미사용 보관 ${p.expired_unused ?? 0}`,
@@ -363,8 +364,8 @@ function CuratorStatus({ run }: { run: ReturnType<typeof lastCuratorRun> }) {
     ...(p.errors ? [`오류 ${p.errors}`] : []),
   ];
   return (
-    <div className="ml-auto flex items-center gap-2 border-l border-line px-4 py-1.5" title={fmtTime(run.at)}>
-      <span className="label-caps">큐레이터</span>
+    <div className="flex min-w-0 basis-full flex-wrap items-center gap-2 border-t border-line px-4 py-1.5 md:ml-auto md:basis-auto md:border-t-0 md:border-l" title={fmtTime(run.at)}>
+      <span className="label-caps whitespace-nowrap">큐레이터</span>
       <Tag tone="none">{timeAgo(run.at)}</Tag>
       <span className="mono text-[11.5px] text-fg-3">{parts.join(" · ")}</span>
     </div>

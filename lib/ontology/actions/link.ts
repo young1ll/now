@@ -6,7 +6,7 @@ import { deleteLinksFor, nodeInfo, objectExists, parseRef } from "../graph";
 import { displayId } from "../ids";
 import { ACTION_MANAGED_LINK_TYPES, SYSTEM_LINK_TYPES, customLinkTypes } from "../schema";
 import { ActionError, OBJECT_TYPES, type ObjectType, type Ref, refKey } from "../types";
-import { inheritsTaint } from "./memory";
+import { absorbsTaint, inheritsTaint } from "./memory";
 
 function ref(db: DB, s: string, what: string): Ref {
   const r = parseRef(s);
@@ -54,10 +54,10 @@ export const linkActions = [
         .prepare("INSERT OR IGNORE INTO links (link_type, from_type, from_id, to_type, to_id, note) VALUES (?, ?, ?, ?, ?, ?)")
         .run(lt.name, from.type, from.id, to.type, to.id, i.note ?? "");
       if (!r.changes) throw new ActionError("이미 같은 링크가 있습니다");
-      // 기억의 근거로 오염된 기억을 붙이면 오염도 따라간다 (memory.propose · merge 와 같은 규칙 — 사람이 확인한 기억은 제외)
+      // 기억의 근거로 오염된 기억·문서를 붙이면 오염도 따라간다 (memory.propose · merge 와 같은 규칙 — 사람이 확인·고정한 기억은 제외: absorbsTaint)
       if (lt.name === "evidenced_by" && from.type === "memory" && inheritsTaint(db, [to])) {
         const m = getMemory(db, from.id);
-        if (m && !m.tainted && m.status !== "verified") updateMemory(db, from.id, { tainted: 1 });
+        if (m && absorbsTaint(m)) updateMemory(db, from.id, { tainted: 1 });
       }
       return {
         summary: `${displayId(from.type, from.id)} ${title(db, from)} —${lt.label}→ ${displayId(to.type, to.id)} ${title(db, to)}`,

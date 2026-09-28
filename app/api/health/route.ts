@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 /** 컨테이너 헬스체크·외부 모니터링용. 인증 없음, 민감 정보 없음. */
 export function GET() {
   try {
-    const schema = db().pragma("user_version", { simple: true }) as number;
+    const schema = db().prepare("PRAGMA user_version").pluck().get() as number;
     db().prepare("SELECT 1").get();
     const ok = schema === migrations.length;
     return Response.json(

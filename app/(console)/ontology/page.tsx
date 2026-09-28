@@ -42,7 +42,7 @@ export default async function OntologyPage({ searchParams }: { searchParams: Sea
           </>
         }
       />
-      <div className="grid gap-px bg-void p-px xl:grid-cols-12">
+      <div className="grid grid-cols-1 gap-px bg-void p-px xl:grid-cols-12">
         <div className="xl:col-span-7">
           <Panel title="객체 유형" count={OBJECT_TYPES.length} flush className="h-full">
             <table className="grid-table">

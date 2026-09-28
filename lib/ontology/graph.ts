@@ -1,6 +1,7 @@
 // 온톨로지 그래프: 객체 = 노드, 링크(외래키 · 감사 파생 · 사용자 정의) = 간선.
 // 저장소는 SQLite 그대로 두고, 그래프 질의(이웃·경로·전체)는 이 계층에서 계산한다.
 import type { DB } from "@/lib/db";
+import { IN_JSON, jsonList } from "@/lib/db/sql";
 import { CLIENT_STATUS, INVOICE_STATUS, MEMORY_STATUS, TASK_STATUS, type Tone } from "@/lib/labels";
 import type { Scope } from "@/lib/repos/scope";
 import { displayId } from "./ids";
@@ -68,8 +69,8 @@ export function nodeInfo(db: DB, refs: Ref[]): Map<string, GraphNode> {
     const uniq = [...new Set(ids)];
     for (let i = 0; i < uniq.length; i += 500) {
       const chunk = uniq.slice(i, i + 500);
-      const sql = `SELECT * FROM (${NODE_SQL[type]}) WHERE id IN (${chunk.map(() => "?").join(",")})`;
-      for (const row of db.prepare(sql).all(...chunk) as NodeRow[]) out.set(refKey({ type, id: row.id }), toNode(type, row));
+      const sql = `SELECT * FROM (${NODE_SQL[type]}) WHERE id IN ${IN_JSON}`;
+      for (const row of db.prepare(sql).all(jsonList(chunk)) as NodeRow[]) out.set(refKey({ type, id: row.id }), toNode(type, row));
     }
   }
   return out;
@@ -119,6 +120,20 @@ export function edgesOf(db: DB, ref: Ref): RawEdge[] {
     .all(ref.type, ref.id, ref.type, ref.id) as { id: number; link_type: string; from_type: ObjectType; from_id: number; to_type: ObjectType; to_id: number }[];
   for (const r of rows) {
     out.push({ from: { type: r.from_type, id: r.from_id }, to: { type: r.to_type, id: r.to_id }, linkType: r.link_type, label: labels.get(r.link_type) ?? r.link_type, source: "custom", linkId: r.id });
+  }
+  return out;
+}
+
+/**
+ * 객체가 외래키로 가리키는 "주인" 객체 (업무·청구서·문서 → 고객). 사업은 넣지 않는다 — 사업 전체의 기억은 대상 객체의 문맥이 아니다.
+ * 세션 컨텍스트 팩이 업무 세션에 그 고객에 관한 기억도 싣게 한다 (결정적: 스키마 순서).
+ */
+export function ownersOf(db: DB, ref: Ref): Ref[] {
+  const out: Ref[] = [];
+  for (const l of INTRINSIC_LINKS) {
+    if (l.fromType !== ref.type || l.toType === "business" || l.toType === "*") continue;
+    const r = db.prepare(`SELECT ${l.fk} AS to_id FROM ${l.table} WHERE id = ? AND ${l.fk} IS NOT NULL`).get(ref.id) as { to_id: number } | undefined;
+    if (r) out.push({ type: l.toType as ObjectType, id: r.to_id });
   }
   return out;
 }

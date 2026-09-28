@@ -475,6 +475,25 @@ describe("기억 — AI 런타임 · 도구 · 신호", () => {
     assert.ok(getSession(db, s)!.context_refs.includes(`memory:${m}`));
   });
 
+  it("업무가 대상인 세션의 팩에는 그 업무 고객의 기억도 들어간다 (회상 순위와 무관)", async () => {
+    const { db, a, ok, client, acme, memId } = setup();
+    const mine = memId(ok(OPERATOR, "memory.record", { statement: "한빛상사는 세금계산서를 매월 25일에 일괄 발행받기를 원한다", kind: "preference", about: [`client:${client}`] }));
+    const other = memId(ok(OPERATOR, "memory.record", { statement: "Acme Robotics 는 금요일 미팅을 피한다", kind: "preference", about: [`client:${acme}`] }));
+    ok(OPERATOR, "ai_profile.create", { name: "p", provider: "anthropic", api_key_env: "TEST_KEY", max_steps: 2 });
+    const p = listProfiles(db).at(-1)!;
+    ok(OPERATOR, "trigger.create", { name: "t", kind: "event", event_pattern: "action.applied", target: "agent", profile_id: p.id });
+    const tid = db.prepare("SELECT id FROM triggers ORDER BY id DESC LIMIT 1").pluck().get() as number;
+    const task = ok(OPERATOR, "task.create", { business_id: a, client_id: client, title: "분기 점검" }).refs.find((r) => r.type === "task")!.id;
+    const eventId = listEvents(db, { type: "action.applied", limit: 50 }).find((e) => e.subject_type === "task" && e.subject_id === task)!.id;
+    const runId = Number(db.prepare("INSERT INTO trigger_runs (trigger_id, event_id, status) VALUES (?, ?, 'running')").run(tid, eventId).lastInsertRowid);
+    const s = createSession(db, p.id, `새 업무 task:${task} 가 생겼다. 처리하라.`, runId);
+    const { f } = mockFetch((_u, body) => ({ json: { id: "x", type: "message", role: "assistant", model: body.model, stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: "text", text: "확인" }] } }));
+    await executeSession(db, s, { fetchImpl: f, env: { TEST_KEY: "k" } });
+    const refs = getSession(db, s)!.context_refs;
+    assert.ok(refs.includes(`memory:${mine}`), refs.join(","));
+    assert.ok(!refs.includes(`memory:${other}`), "다른 고객의 기억은 대상이 아니다");
+  });
+
   it("MCP 도구 remember · get_context · cite, 지침과 CLI HELP", async () => {
     const { db, agent, acme, note, client } = setup();
     const call = (name: string, args: Record<string, unknown>) => handleMcp(db, agent, { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } });

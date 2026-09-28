@@ -98,7 +98,7 @@ export function Panel({
           {action && <div className="no-print flex items-center gap-1">{action}</div>}
         </div>
       )}
-      <div className={flush ? "min-h-0 flex-1" : "min-h-0 flex-1 p-3"}>{children}</div>
+      <div className={flush ? "min-h-0 min-w-0 flex-1 overflow-x-auto" : "min-h-0 min-w-0 flex-1 overflow-x-auto p-3"}>{children}</div>
     </section>
   );
 }

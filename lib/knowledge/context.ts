@@ -3,6 +3,7 @@
 // why-탐색기에서 "그때 AI 가 본 것"을 재현한다. 텍스트는 데이터 펜스로 감싼다 — 기억은 지시가 아니다.
 import crypto from "node:crypto";
 import type { DB } from "@/lib/db";
+import { IN_JSON, PAIRS_JSON, jsonList, refPairs } from "@/lib/db/sql";
 import { today } from "@/lib/dates";
 import { MEMORY_KIND } from "@/lib/labels";
 import { displayId } from "@/lib/ontology/ids";
@@ -39,8 +40,8 @@ export type ContextQuery = {
   env?: Record<string, string | undefined>;
   /** 기준일 (유효기간 판정) — 테스트용 */
   on?: string;
-  /** 이 사업의 항목만 넣는다 (사업 범위가 있는 에이전트 — 공용 항목은 businessId null) */
-  allow?: (businessId: number | null) => boolean;
+  /** 넣어도 되는 항목인가 (사업 범위가 있는 에이전트 — policy Reach.sees: 공용 항목은 businessId null, 연결된 객체까지 본다) */
+  allow?: (ref: Ref, businessId: number | null) => boolean;
 };
 
 /** 팩·화면에서 쓰는 상태 라벨. 오염된 미확인 기억은 "외부 출처·미검증" */
@@ -79,11 +80,11 @@ function aboutMemories(db: DB, about: Ref[], on: string, exclude: Set<number>, l
   if (!about.length) return { rows: [], total: 0 };
   const statuses = ["verified", "active", "proposed", "disputed"];
   const ex = [...exclude];
-  const where = `m.id IN (SELECT from_id FROM links WHERE link_type = 'about' AND from_type = 'memory' AND (${about.map(() => "(to_type = ? AND to_id = ?)").join(" OR ")}))
+  const where = `m.id IN (SELECT from_id FROM links WHERE link_type = 'about' AND from_type = 'memory' AND (to_type, to_id) IN ${PAIRS_JSON})
     AND m.status IN (${statuses.map(() => "?").join(",")})
     AND (m.valid_from IS NULL OR m.valid_from <= ?) AND (m.valid_to IS NULL OR m.valid_to >= ?)
-    ${ex.length ? `AND m.id NOT IN (${ex.map(() => "?").join(",")})` : ""}`;
-  const params = [...about.flatMap((r) => [r.type, r.id]), ...statuses, on, on, ...ex];
+    AND m.id NOT IN ${IN_JSON}`;
+  const params = [refPairs(about), ...statuses, on, on, jsonList(ex)];
   const order = MEMORY_STATUS_ORDER.map((st, i) => `WHEN '${st}' THEN ${i}`).join(" ");
   const rows = db.prepare(`SELECT m.* FROM memories m WHERE ${where} ORDER BY CASE m.status ${order} ELSE 9 END, m.id LIMIT ?`).all(...params, limit) as Memory[];
   const total = rows.length < limit ? rows.length : (db.prepare(`SELECT COUNT(*) FROM memories m WHERE ${where}`).pluck().get(...params) as number);
@@ -143,7 +144,7 @@ export async function buildContext(db: DB, q: ContextQuery = {}): Promise<Contex
   // 사업 범위 밖 항목은 팩에 넣지 않는다 (예산을 세기 전에)
   if (q.allow) {
     const allow = q.allow;
-    out.splice(0, out.length, ...out.filter((c) => allow(c.businessId)));
+    out.splice(0, out.length, ...out.filter((c) => allow(c.ref, c.businessId)));
   }
 
   // ④ 예산: 넘으면 거기서 멈춘다 (건너뛰고 뒤의 짧은 것을 넣지 않는다 — 우선순위가 곧 순서)

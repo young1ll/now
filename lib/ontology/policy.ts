@@ -124,17 +124,55 @@ export type Reach = {
   scopeName: string | null;
   /** 이 사업의 객체를 볼 수 있는가 — 사업 없는 공용 객체(null)는 항상 */
   seesBusiness: (businessId: number | null | undefined) => boolean;
+  /**
+   * 이 객체를 볼 수 있는가 (businessId = 그 객체의 사업). 사업 범위 밖이면 거짓.
+   * 사업 없는 공용 기억·문서는 연결된 객체(기억: 대상·근거 / 에피소드·브리프: 언급)가 모두 범위 안일 때만 —
+   * 여러 사업에 걸친 에피소드·근거가 다른 사업에 있는 기억은 본문·카드에 그 사업의 내용(실행 요약·고객명)이 담긴다.
+   */
+  sees: (ref: Ref, businessId: number | null | undefined) => boolean;
   allowsAction: (name: string) => boolean;
 };
+
+/** 공용 기억·문서가 가리키는 객체 (about · evidenced_by · mentions 링크) */
+const SHARED_LINKS = ["about", "evidenced_by", "mentions"];
+
+function linkedRefs(db: DB, ref: Ref): Ref[] {
+  return db
+    .prepare(`SELECT to_type AS type, to_id AS id FROM links WHERE from_type = ? AND from_id = ? AND link_type IN (${SHARED_LINKS.map(() => "?").join(",")})`)
+    .all(ref.type, ref.id, ...SHARED_LINKS) as Ref[];
+}
 
 export function reachOf(db: DB, actor: Actor): Reach {
   const agent = actor.type === "agent" ? getAgent(db, Number(actor.id)) : undefined;
   const scope = agent?.business_scope ?? null;
+  const seesBusiness = (b: number | null | undefined) => scope === null || b === null || b === undefined || b === scope;
+  const sharedSeen = new Map<string, boolean>();
+  const sees = (ref: Ref, b: number | null | undefined): boolean => {
+    if (scope === null) return true;
+    if (ref.type === "business") return ref.id === scope;
+    if (!seesBusiness(b)) return false;
+    if ((b !== null && b !== undefined) || (ref.type !== "memory" && ref.type !== "note")) return true;
+    const key = `${ref.type}:${ref.id}`;
+    let ok = sharedSeen.get(key);
+    if (ok === undefined) {
+      const linked = linkedRefs(db, ref);
+      const info = nodeInfo(db, linked);
+      ok = linked.every((r) => {
+        if (r.type === "business") return r.id === scope;
+        const n = info.get(`${r.type}:${r.id}`);
+        // 연결된 공용 기억·문서는 한 단계만 본다 (사업 없음 = 통과). 지워진 객체는 링크가 같이 지워진다
+        return !n || seesBusiness(n.businessId);
+      });
+      sharedSeen.set(key, ok);
+    }
+    return ok;
+  };
   return {
     agent,
     scope,
     scopeName: scope === null ? null : businessName(db, scope),
-    seesBusiness: (b) => scope === null || b === null || b === undefined || b === scope,
+    seesBusiness,
+    sees,
     allowsAction: (name) => !agent || actionAllowed(agent.allowed_actions, name),
   };
 }

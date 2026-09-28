@@ -3,6 +3,7 @@
 //
 // 금액은 모두 통화의 최소 단위 정수(KRW=원, USD=센트)로 저장한다. lib/money.ts 참고.
 // 날짜는 'YYYY-MM-DD', 시각은 ISO 8601 문자열.
+import type Database from "better-sqlite3";
 
 export const migrations: string[] = [
   /* 1: 초기 스키마 */ `
@@ -548,4 +549,64 @@ export const migrations: string[] = [
   ALTER TABLE signal_state ADD COLUMN subject_id INTEGER;
   ALTER TABLE signal_state ADD COLUMN located INTEGER NOT NULL DEFAULT 0;
   `,
+  // 11: 외래키 색인 — 청구서 합계(항목·입금)·고객별 업무/청구서/문서 조회가 행마다 전체 스캔이 되지 않게.
+  // 감사 run 이 닿는 사업(JSON 배열, NULL = 모름) — action.* 이벤트가 싣고 사업 범위 에이전트의 이벤트 필터가 쓴다 (§15)
+  `
+  CREATE INDEX invoice_items_invoice ON invoice_items(invoice_id);
+  CREATE INDEX payments_invoice ON payments(invoice_id);
+  CREATE INDEX tasks_client ON tasks(client_id);
+  CREATE INDEX invoices_client ON invoices(client_id);
+  CREATE INDEX notes_client ON notes(client_id);
+  ALTER TABLE action_runs ADD COLUMN business_ids TEXT;
+  `,
+  // 12: 색인 일괄 적재 — settings 에 'index_bulk' 가 있는 동안(한 트랜잭션 안) 청크 트리거가 FTS 를 건너뛴다.
+  // 빈 색인·형식 변경 때의 전체 색인은 청크를 쓴 뒤 FTS 를 'rebuild' 한 번으로 만든다 (행마다 trigram FTS 에 넣으면 초선형으로 느려진다)
+  `
+  DROP TRIGGER chunks_ai;
+  DROP TRIGGER chunks_ad;
+  DROP TRIGGER chunks_au;
+  CREATE TRIGGER chunks_ai AFTER INSERT ON chunks WHEN NOT EXISTS (SELECT 1 FROM settings WHERE key = 'index_bulk') BEGIN
+    INSERT INTO chunks_fts(rowid, head, text) VALUES (new.id, new.head, new.text);
+    INSERT INTO chunks_words(rowid, head, text) VALUES (new.id, new.head, new.text);
+  END;
+  CREATE TRIGGER chunks_ad AFTER DELETE ON chunks WHEN NOT EXISTS (SELECT 1 FROM settings WHERE key = 'index_bulk') BEGIN
+    INSERT INTO chunks_fts(chunks_fts, rowid, head, text) VALUES ('delete', old.id, old.head, old.text);
+    INSERT INTO chunks_words(chunks_words, rowid, head, text) VALUES ('delete', old.id, old.head, old.text);
+  END;
+  CREATE TRIGGER chunks_au AFTER UPDATE OF head, text ON chunks WHEN NOT EXISTS (SELECT 1 FROM settings WHERE key = 'index_bulk') BEGIN
+    INSERT INTO chunks_fts(chunks_fts, rowid, head, text) VALUES ('delete', old.id, old.head, old.text);
+    INSERT INTO chunks_fts(rowid, head, text) VALUES (new.id, new.head, new.text);
+    INSERT INTO chunks_words(chunks_words, rowid, head, text) VALUES ('delete', old.id, old.head, old.text);
+    INSERT INTO chunks_words(rowid, head, text) VALUES (new.id, new.head, new.text);
+  END;
+  `,
 ];
+
+/**
+ * 마이그레이션 직전 단계 (키 = 적용할 마이그레이션 번호, user_version 기준 1부터). 같은 트랜잭션 안에서 SQL 앞에 실행한다.
+ * 배포된 SQL 은 고칠 수 없으니, 그 SQL 이 실패할 수 있는 이전 상태를 여기서 먼저 정리한다.
+ *
+ * 6 · 7: 이전 버전의 link_type.define 이 받던 이름(about · evidenced_by · contradicts · promoted_to · mentions)을
+ * 운영자가 정의해 두었으면 마이그레이션이 '<이름>_user' 로 옮긴다 — 그런데 '<이름>_user' 도 이미 정의돼 있으면
+ * INSERT 가 기본키에 걸려 업그레이드가 실패하고 앱이 뜨지 않는다. 그래서 먼저 비어 있는 이름
+ * ('<이름>_user' → '<이름>_user2' → …)으로 옮겨 둔다 (옮긴 뒤 마이그레이션의 이동 SQL 은 할 일이 없다).
+ */
+export const preMigrations: Record<number, (db: Database.Database) => void> = {
+  6: (db) => moveUserLinkTypes(db, ["about", "evidenced_by", "contradicts", "promoted_to"]),
+  7: (db) => moveUserLinkTypes(db, ["mentions"]),
+};
+
+function moveUserLinkTypes(db: Database.Database, names: string[]) {
+  const exists = (n: string) => !!db.prepare("SELECT 1 FROM link_types WHERE name = ?").get(n);
+  for (const name of names) {
+    if (!exists(name)) continue;
+    let to = `${name}_user`;
+    for (let i = 2; exists(to); i++) to = `${name}_user${i}`;
+    db.prepare(
+      `INSERT INTO link_types (name, label, inverse_label, from_type, to_type, cardinality, description, created_at)
+       SELECT ?, label, inverse_label, from_type, to_type, cardinality, description, created_at FROM link_types WHERE name = ?`,
+    ).run(to, name);
+    db.prepare("UPDATE links SET link_type = ? WHERE link_type = ?").run(to, name);
+    db.prepare("DELETE FROM link_types WHERE name = ?").run(name);
+  }
+}

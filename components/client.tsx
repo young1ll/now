@@ -1,14 +1,24 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 
-/** 관망 화면 자동 새로고침. 탭이 보이지 않으면 멈춘다. */
+/**
+ * 관망 화면 자동 새로고침. 탭이 보이지 않으면 멈춘다.
+ * 이전 새로고침이 아직 끝나지 않았으면 건너뛴다 — 렌더가 주기보다 느린 화면에서 요청이 쌓이지 않게.
+ */
 export function AutoRefresh({ seconds = 10 }: { seconds?: number }) {
   const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const busy = useRef(false);
+  useEffect(() => {
+    busy.current = pending;
+  }, [pending]);
   useEffect(() => {
     const t = setInterval(() => {
-      if (document.visibilityState === "visible") router.refresh();
+      if (document.visibilityState !== "visible" || busy.current) return;
+      busy.current = true;
+      startTransition(() => router.refresh());
     }, seconds * 1000);
     return () => clearInterval(t);
   }, [router, seconds]);

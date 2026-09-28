@@ -4,7 +4,7 @@ import path from "node:path";
 import { type DB, dbPath } from "@/lib/db";
 import { migrations } from "@/lib/db/migrations";
 
-export const APP_VERSION = "0.3.0";
+export const APP_VERSION = "0.4.0";
 const startedAt = new Date().toISOString();
 
 export type BackupInfo = { file: string; at: string; bytes: number };
@@ -30,12 +30,12 @@ const size = (f: string) => (fs.existsSync(f) ? fs.statSync(f).size : 0);
 
 export function runtimeInfo(db: DB) {
   const file = dbPath();
-  const schema = db.pragma("user_version", { simple: true }) as number;
+  const schema = db.prepare("PRAGMA user_version").pluck().get() as number;
   const tables = ["businesses", "clients", "tasks", "invoices", "payments", "expenses", "notes", "agents", "action_runs", "infra_snapshots"];
   const counts = Object.fromEntries(
     tables.map((t) => [t, (db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as { n: number }).n]),
   ) as Record<string, number>;
-  const integrity = (db.pragma("quick_check", { simple: true }) as string) === "ok";
+  const integrity = (db.prepare("PRAGMA quick_check").pluck().get() as string) === "ok";
   return {
     version: APP_VERSION,
     node: process.version,

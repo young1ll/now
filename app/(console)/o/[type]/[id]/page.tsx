@@ -11,7 +11,7 @@ import { MemoryLink, MemoryStatusTag, memoryHref } from "@/components/memory";
 import { neighborhood } from "@/lib/ontology/graph";
 import { RunTable } from "@/components/runs";
 import { TrustPanel } from "@/components/trust";
-import { computeSignals } from "@/lib/ontology/signals";
+import { trustSuggestions } from "@/lib/ontology/trust";
 import type { Agent } from "@/lib/repos/agents";
 import { Callout, Empty, OBJECT_ICON, ObjectLink, PageHeader, Panel, PropertyList, Tag, fmtTime } from "@/components/ui";
 import { currentScope } from "@/lib/context";
@@ -88,7 +88,7 @@ export default async function ObjectPage({ params, searchParams }: { params: Pro
           <Icon name="inbox" size={12} /> 이 객체에 대한 승인 대기 요청 {pending.length}건 — {pending.map((r) => r.result?.summary).join(" · ")}
         </Link>
       )}
-      <div className="grid gap-px bg-void p-px xl:grid-cols-12">
+      <div className="grid grid-cols-1 gap-px bg-void p-px xl:grid-cols-12">
         <div className="flex flex-col gap-px xl:col-span-8">
           <TypePanel type={def.type} obj={obj} path={path} />
           <KnownPanel type={def.type} id={id} path={path} />
@@ -263,7 +263,7 @@ function TypePanel({ type, obj, path }: { type: ObjectType; obj: ObjectDetail; p
   if (type === "agent") {
     const runs = listRuns(db(), { actorType: "agent", actorId: String(obj.ref.id), limit: 30 });
     const a = raw as unknown as Agent;
-    const suggestions = computeSignals(db(), null).filter((s) => s.kind.startsWith("trust.") && s.ref?.type === "agent" && s.ref.id === a.id);
+    const suggestions = trustSuggestions(db()).filter((s) => s.kind.startsWith("trust.") && s.ref?.type === "agent" && s.ref.id === a.id);
     return (
       <>
         <TrustPanel agent={a} path={path} suggestions={suggestions} />

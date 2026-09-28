@@ -10,11 +10,11 @@ import { type Graph, neighborhood, nodeInfo, objectExists, parseRef, shortestPat
 import { type Reach, actionAllowed, reachOf } from "@/lib/ontology/policy";
 import { agentTrust } from "@/lib/ontology/trust";
 import { AGENT_ROLE, MEMORY_TRUST } from "@/lib/labels";
-import { listGrants } from "@/lib/repos/agents";
+import { getAgent, listGrants } from "@/lib/repos/agents";
 import { PROPERTIES, allLinkTypes } from "@/lib/ontology/schema";
 import { buildContext } from "@/lib/knowledge/context";
 import { recall } from "@/lib/knowledge/recall";
-import { MEMORY_KINDS, MEMORY_STATUSES, actorKey, listMemories, memoryLinks, recordMemoryUse } from "@/lib/repos/memories";
+import { MEMORY_KINDS, MEMORY_STATUSES, actorKey, getMemory, listMemories, memoryLinks, recordMemoryUse } from "@/lib/repos/memories";
 import { SYSTEM_LINK_TYPES } from "@/lib/ontology/schema";
 import { type NowEvent, listEvents } from "@/lib/repos/events";
 import { episodeSessionId, listEpisodes } from "@/lib/repos/notes";
@@ -35,11 +35,26 @@ export type ToolCtx = { sessionId?: number | null; reach?: Reach };
 
 const reachIn = (db: DB, actor: Actor, ctx: ToolCtx) => ctx.reach ?? reachOf(db, actor);
 
-/** 범위 안에서 보이는 참조만 (없는 객체는 가릴 것이 없으니 통과) */
+/**
+ * 범위 안에서 보이는 참조만. 사업 범위가 있으면 찾을 수 없는(지워진) 객체도 안 보이는 것으로 친다 —
+ * 지워진 객체의 사업은 알 수 없고, 그 객체를 가리키는 실행 요약·이벤트에는 제목이 남아 있다.
+ */
 function visibleKeys(db: DB, reach: Reach, refs: Ref[]): Set<string> {
+  if (reach.scope === null) return new Set(refs.map(refKey));
   const info = nodeInfo(db, refs);
-  return new Set(refs.filter((r) => { const n = info.get(refKey(r)); return !n || reach.seesBusiness(n.businessId); }).map(refKey));
+  return new Set(refs.filter((r) => { const n = info.get(refKey(r)); return !!n && reach.sees(r, n.businessId); }).map(refKey));
 }
+
+/**
+ * 사업 범위 에이전트에게 에이전트 객체를 돌려줄 때: 범위 밖 사업에 묶인 다른 에이전트의 사업 이름·id 를 가린다
+ * (§15: 범위 밖 사업의 이름은 임의 id 의 소속을 캐는 통로가 된다). 가려야 하면 true
+ */
+function hidesAgentScope(db: DB, reach: Reach, type: string, id: number): boolean {
+  if (reach.scope === null || type !== "agent") return false;
+  const b = getAgent(db, id)?.business_scope ?? null;
+  return b !== null && !reach.seesBusiness(b);
+}
+const OTHER_BUSINESS = "다른 사업";
 
 function mustSee(db: DB, reach: Reach, r: Ref, label: string) {
   if (reach.scope !== null && !visibleKeys(db, reach, [r]).has(refKey(r))) throw new ToolError(`범위 밖 객체입니다: ${label} — 이 에이전트의 사업 범위는 ${reach.scopeName} 입니다`);
@@ -80,6 +95,9 @@ export function runOut(r: RunView) {
           : undefined,
   };
 }
+
+/** recall 질의 길이 상한 (넘으면 앞부분만) */
+export const RECALL_QUERY_MAX = 2000;
 
 const scopeArg = z.number().int().positive().optional().describe("사업 id 로 범위 제한 (생략 시 전체)");
 
@@ -174,9 +192,7 @@ export const TOOLS: Tool[] = [
     (db, actor, { type, query, business_id, limit }, ctx) => {
       const scope = business_id ?? null;
       const reach = reachIn(db, actor, ctx);
-      const rows = (type ? OBJECTS[type].list(db, scope, query, { limit: limit ?? 50 }) : searchObjects(db, scope, query ?? "", 20)).filter(
-        (r) => reach.seesBusiness(r.ref.type === "business" ? r.ref.id : r.businessId),
-      );
+      const rows = (type ? OBJECTS[type].list(db, scope, query, { limit: limit ?? 50 }) : searchObjects(db, scope, query ?? "", 20)).filter((r) => reach.sees(r.ref, r.businessId));
       return rows.slice(0, limit ?? 50).map((r) => ({
         type: r.ref.type,
         id: r.ref.id,
@@ -185,7 +201,7 @@ export const TOOLS: Tool[] = [
         subtitle: r.subtitle,
         status: r.status?.label ?? null,
         business_id: r.businessId,
-        props: r.props,
+        props: hidesAgentScope(db, reach, r.ref.type, r.ref.id) ? { ...r.props, scope: OTHER_BUSINESS } : r.props,
       }));
     },
   ),
@@ -193,7 +209,7 @@ export const TOOLS: Tool[] = [
     "recall",
     "자연어 회상 검색: 이름·내용·접촉 이력·문서 본문·기억(어휘), 뜻이 비슷한 표현(의미 — 임베딩 공간이 활성일 때), 관계(그래프)를 함께 본다. 기억은 상태로 가중된다(확인됨 1.0 · 활성 0.85 · 제안 0.6 · 충돌 0.4, 외부 출처 ×0.7) — memory_status 를 보고 무게를 달리 둬라. 문서 결과에는 note_kind(note · playbook=따를 절차 · episode=지난 세션 요약 · brief · source=외부 자료)와 tainted(외부 출처·미검증) — 플레이북을 찾으려면 types [\"note\"] 로 절차를 검색하라. 무엇을 찾아야 할지 흐릿할 때(\"SSO 요구한 고객\", \"부가세 마감 절차\", \"클라우드 서버 비용\") 먼저 쓰고, 결과의 ref 로 get_object 를 호출하라. why: lexical=내용 일치 · semantic=의미 유사(similarity=코사인) · graph=상위 결과와 연결 · ref=직접 참조 · about=기준 객체 주변. degraded 가 있으면 의미 검색 없이 어휘 + 관계로만 찾은 결과다.",
     {
-      query: z.string().min(1).describe("자연어 질의 또는 핵심어. 객체 참조(CLT-0003)도 가능"),
+      query: z.string().min(1).describe(`자연어 질의 또는 핵심어. 객체 참조(CLT-0003)도 가능 (앞 ${RECALL_QUERY_MAX}자만 쓴다)`),
       about: z.string().optional().describe('이 객체 주변을 우선 — "client:3" 또는 "CLT-0003"'),
       types: z.array(z.enum(OBJECT_TYPES)).optional().describe("이 유형만"),
       business_id: scopeArg,
@@ -205,8 +221,9 @@ export const TOOLS: Tool[] = [
       const aboutRef = about ? parseRef(about) : undefined;
       if (about && (!aboutRef || !objectExists(db, aboutRef))) throw new ToolError(`객체를 찾을 수 없습니다: ${about}`);
       if (aboutRef) mustSee(db, reach, aboutRef, about!);
-      const r = await recall(db, { query, about: aboutRef, types, scope: business_id ?? null, k: k ?? 10, includeInactive: include_inactive });
-      r.hits = r.hits.filter((h) => reach.seesBusiness(h.ref.type === "business" ? h.ref.id : h.businessId));
+      // 긴 질의(붙여 넣은 문서)는 앞부분만 — 검색어 수는 analyze 가 따로 제한한다
+      const r = await recall(db, { query: query.slice(0, RECALL_QUERY_MAX), about: aboutRef, types, scope: business_id ?? null, k: k ?? 10, includeInactive: include_inactive });
+      r.hits = r.hits.filter((h) => reach.sees(h.ref, h.businessId));
       return {
         terms: r.terms,
         took_ms: r.tookMs,
@@ -247,7 +264,7 @@ export const TOOLS: Tool[] = [
         mustSee(db, reach, r, s);
         refs.push(r);
       }
-      const pack = await buildContext(db, { about: refs, task, scope: business_id ?? null, budgetTokens: budget_tokens, allow: reach.scope === null ? undefined : reach.seesBusiness });
+      const pack = await buildContext(db, { about: refs, task, scope: business_id ?? null, budgetTokens: budget_tokens, allow: reach.scope === null ? undefined : reach.sees });
       recordMemoryUse(db, pack.items.filter((i) => i.kind === "memory").map((i) => i.ref.id), { sessionId: ctx.sessionId ?? null, actor: actorKey(actor), how: "context" });
       return { text: pack.text, items: pack.items.map((i) => ({ ref: refKey(i.ref), kind: i.kind, status: i.status ?? null, tokens: i.tokens })), hash: pack.hash, tokens: pack.tokens, truncated: pack.truncated };
     },
@@ -277,7 +294,10 @@ export const TOOLS: Tool[] = [
     "팩 밖에서(recall 등으로) 찾은 기억을 판단에 썼을 때 사용 기록을 남긴다. 컨텍스트 팩의 기억은 답에 [mem:ID] 로 적으면 세션 종료 때 자동 기록된다.",
     { memory_ids: z.array(z.number().int().positive()).min(1).max(50).describe("쓴 기억 id") },
     (db, actor, { memory_ids }, ctx) => {
-      const cited = recordMemoryUse(db, memory_ids, { sessionId: ctx.sessionId ?? null, actor: actorKey(actor), how: "cited" });
+      // 사업 범위 밖 기억은 없는 기억과 똑같이 다룬다 — 사용 기록(큐레이터의 미사용 만료·승격 신호)을 바꾸지 않는다
+      const reach = reachIn(db, actor, ctx);
+      const ids = reach.scope === null ? memory_ids : memory_ids.filter((id) => { const m = getMemory(db, id); return !!m && reach.sees({ type: "memory", id }, m.business_id); });
+      const cited = recordMemoryUse(db, ids, { sessionId: ctx.sessionId ?? null, actor: actorKey(actor), how: "cited" });
       const unknown = [...new Set(memory_ids)].filter((id) => !cited.includes(id));
       return { cited, unknown, ...(unknown.length ? { note: `존재하지 않는 기억 id 는 무시했습니다: ${unknown.join(", ")}` } : {}) };
     },
@@ -295,8 +315,11 @@ export const TOOLS: Tool[] = [
     (db, actor, { status, kind, about, business_id, limit }, ctx) => {
       const aboutRef = about ? parseRef(about) : undefined;
       if (about && (!aboutRef || !objectExists(db, aboutRef))) throw new ToolError(`객체를 찾을 수 없습니다: ${about}`);
-      if (aboutRef) mustSee(db, reachIn(db, actor, ctx), aboutRef, about!);
-      const rows = listMemories(db, business_id ?? null, { status: status ?? ["proposed", "active", "verified", "disputed"], kind, about: aboutRef, limit: limit ?? 50 });
+      const reach = reachIn(db, actor, ctx);
+      if (aboutRef) mustSee(db, reach, aboutRef, about!);
+      const rows = listMemories(db, business_id ?? null, { status: status ?? ["proposed", "active", "verified", "disputed"], kind, about: aboutRef, limit: limit ?? 50 }).filter((m) =>
+        reach.sees({ type: "memory", id: m.id }, m.business_id),
+      );
       return rows.map((m) => {
         const l = memoryLinks(db, m.id);
         return {
@@ -332,7 +355,7 @@ export const TOOLS: Tool[] = [
       const s = since?.trim();
       if (s && Number.isNaN(Date.parse(s))) throw new ToolError(`since 는 ISO 시각이어야 합니다: ${s}`);
       const from = s ? new Date(s).toISOString() : new Date(Date.now() - 7 * 86_400_000).toISOString();
-      const rows = listEpisodes(db, { since: from, limit: limit ?? 20, includeTainted: include_tainted ?? true, scope: reach.scope }).filter((n) => reach.seesBusiness(n.business_id));
+      const rows = listEpisodes(db, { since: from, limit: limit ?? 20, includeTainted: include_tainted ?? true, scope: reach.scope }).filter((n) => reach.sees({ type: "note", id: n.id }, n.business_id));
       return {
         since: from,
         episodes: rows.map((n) => ({
@@ -360,18 +383,22 @@ export const TOOLS: Tool[] = [
       mustSee(db, reach, { type, id }, d.displayId);
       const seen = visibleKeys(db, reach, d.links.map((l) => l.ref));
       const links = d.links.filter((l) => seen.has(refKey(l.ref)));
-      const history = listRuns(db, { object: { type, id }, limit: 15 }).map(runOut);
+      // 사업 범위: 이 run 이 닿는 사업(business_ids)이 범위 밖이면 뺀다
+      const history = listRuns(db, { object: { type, id }, limit: 15 })
+        .filter((r) => !r.business_ids || r.business_ids.every((b) => reach.seesBusiness(b)))
+        .map(runOut);
       // 범위 밖 객체에 닿은 실행은 통째로 뺀다 — 요약·메모(run.flag 등)에 그 객체의 내용이 담긴다
       const histSeen = visibleKeys(db, reach, history.flatMap((h) => h.objects.map((o) => ({ type: o.type, id: o.id }))));
       const visibleHistory = history.filter((h) => h.objects.every((o) => histSeen.has(`${o.type}:${o.id}`)));
+      const masked = hidesAgentScope(db, reach, type, id);
       return {
         type,
         id,
         display_id: d.displayId,
         title: d.title,
         status: d.status?.label ?? null,
-        properties: Object.fromEntries(d.properties.map((p) => [p.key, p.value])),
-        raw: d.raw,
+        properties: Object.fromEntries(d.properties.map((p) => [p.key, masked && p.key === "scope" ? OTHER_BUSINESS : p.value])),
+        raw: masked ? { ...d.raw, business_scope: null, ...("business_scope_name" in d.raw ? { business_scope_name: null } : {}) } : d.raw,
         links: links.map((l) => ({ type: l.ref.type, id: l.ref.id, display_id: l.displayId, title: l.title, relation: l.relation })),
         available_actions: (OBJECTS[type].actionsFor?.(d.raw) ?? OBJECTS[type].actions).filter(reach.allowsAction),
         history: visibleHistory,
@@ -447,7 +474,7 @@ export const TOOLS: Tool[] = [
       mustSee(db, reach, b, to);
       const g = shortestPath(db, a, b);
       // 범위 밖 객체를 지나는 경로는 보여주지 않는다 (경로 자체가 범위 밖 관계를 드러낸다)
-      if (g && g.nodes.some((n) => !reach.seesBusiness(n.businessId))) return { found: false, note: "사업 범위 안에서는 연결 경로가 없습니다" };
+      if (g && g.nodes.some((n) => !reach.sees({ type: n.type, id: n.id }, n.businessId))) return { found: false, note: "사업 범위 안에서는 연결 경로가 없습니다" };
       return g ? { found: true, ...graphOut(g) } : { found: false, note: "6단계 안에 연결 경로가 없습니다" };
     },
   ),
@@ -505,24 +532,40 @@ function eventRefs(e: NowEvent): Ref[] {
 }
 
 /**
- * 사업 범위: 범위 밖 객체가 주체이거나 payload.refs 에 하나라도 있거나, 범위 밖 사업을 명시한(payload.business_id) 이벤트는 뺀다.
- * 범위를 모르는 이벤트(scope_unknown — 위치를 기록하기 전의 신호 해소)도 뺀다. list_events · SSE 스트림 공용
+ * 사업 범위: 범위 밖 객체가 주체이거나 payload.refs 에 하나라도 있거나, 범위 밖 사업을 명시한(payload.business_id · business_ids) 이벤트는 뺀다.
+ * 범위를 모르는 이벤트도 뺀다 — scope_unknown(위치를 기록하기 전의 신호 해소), 사업을 싣지 않은 action.* 중
+ * 대상이 없는 것(대상 없는 생성의 승인 대기 · 파싱 단계 실패 — 요약·근거에 다른 사업의 내용이 담길 수 있다) 또는
+ * 지워진 객체를 가리키는 것(사업을 알 수 없고 요약에 제목이 남는다). 단 이 에이전트 자신이 일으킨 이벤트는 사업을 몰라도 보인다.
+ * list_events · SSE 스트림 공용
  */
 export function visibleEvents(db: DB, reach: Reach, items: NowEvent[]): NowEvent[] {
   if (reach.scope === null) return items;
   const seen = visibleKeys(db, reach, items.flatMap(eventRefs));
-  return items.filter(
-    (e) =>
-      e.payload.scope_unknown !== true &&
-      eventRefs(e).every((r) => seen.has(refKey(r))) &&
-      reach.seesBusiness(typeof e.payload.business_id === "number" ? e.payload.business_id : null),
-  );
+  const info = nodeInfo(db, items.flatMap(eventRefs));
+  const self = reach.agent ? String(reach.agent.id) : null;
+  return items.filter((e) => {
+    if (e.payload.scope_unknown === true) return false;
+    const refs = eventRefs(e);
+    const ids = Array.isArray(e.payload.business_ids) ? (e.payload.business_ids as unknown[]) : null;
+    const one = typeof e.payload.business_id === "number" ? e.payload.business_id : null;
+    // 명시된 사업이 하나라도 범위 밖이면 뺀다
+    if (one !== null && !reach.seesBusiness(one)) return false;
+    if (ids && !ids.every((b) => typeof b === "number" && reach.seesBusiness(b))) return false;
+    const known = ids !== null || one !== null;
+    const mine = self !== null && e.actor_type === "agent" && e.actor_id === self;
+    // 있는 객체는 모두 범위 안이어야 한다
+    if (!refs.filter((r) => info.has(refKey(r))).every((r) => seen.has(refKey(r)))) return false;
+    if (known || mine) return true;
+    // 사업을 모르는 이벤트: 지워진 객체를 가리키면 뺀다, 대상 없는 action.* 도 뺀다
+    if (refs.some((r) => !info.has(refKey(r)))) return false;
+    return !(e.type.startsWith("action.") && refs.length === 0);
+  });
 }
 
 /** 범위 밖 사업의 노드와 그 노드에 닿는 간선을 뺀다 */
 function scopeGraph(reach: Reach, g: Graph): Graph {
   if (reach.scope === null) return g;
-  const nodes = g.nodes.filter((n) => reach.seesBusiness(n.businessId));
+  const nodes = g.nodes.filter((n) => reach.sees({ type: n.type, id: n.id }, n.businessId));
   const keep = new Set(nodes.map((n) => n.key));
   return { nodes, edges: g.edges.filter((e) => keep.has(e.from) && keep.has(e.to)), truncated: g.truncated };
 }
@@ -539,9 +582,29 @@ export const TOOL_MAP = Object.fromEntries(TOOLS.map((t) => [t.name, t]));
 
 const takesBusiness = (t: Tool) => "business_id" in ((t.input as unknown as { shape?: Record<string, unknown> }).shape ?? {});
 
+/** 도구 인자의 모양 상한 — 깊게 중첩된 값은 감사 기록(JSON.stringify)·해시에서 스택을 넘친다. 어떤 액션 입력도 이만큼 깊지 않다 */
+export const MAX_ARG_DEPTH = 32;
+export const MAX_ARG_NODES = 20_000;
+
+/** 인자 깊이·크기 검사 (재귀 없이 — 검사 자체가 스택을 넘치지 않게). 넘으면 ToolError */
+export function checkArgShape(args: unknown) {
+  const stack: [unknown, number][] = [[args, 0]];
+  let nodes = 0;
+  while (stack.length) {
+    const [v, depth] = stack.pop()!;
+    if (v === null || typeof v !== "object") continue;
+    if (depth >= MAX_ARG_DEPTH) throw new ToolError(`인자가 너무 깊게 중첩되어 있습니다 (최대 ${MAX_ARG_DEPTH}단계)`);
+    for (const x of Array.isArray(v) ? v : Object.values(v)) {
+      if (++nodes > MAX_ARG_NODES) throw new ToolError(`인자가 너무 큽니다 (값 최대 ${MAX_ARG_NODES}개)`);
+      stack.push([x, depth + 1]);
+    }
+  }
+}
+
 export async function callTool(db: DB, actor: Actor, name: string, args: unknown, ctx: ToolCtx = {}): Promise<unknown> {
   const tool = Object.hasOwn(TOOL_MAP, name) ? TOOL_MAP[name] : undefined;
   if (!tool) throw new ToolError(`알 수 없는 도구: ${name}`);
+  checkArgShape(args);
   const parsed = tool.input.safeParse(args ?? {});
   if (!parsed.success) throw new ToolError(parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
   const reach = reachOf(db, actor);

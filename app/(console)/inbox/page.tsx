@@ -28,7 +28,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Search
         live
         error={one(sp.error)}
       />
-      <div className="grid gap-px bg-void p-px xl:grid-cols-12">
+      <div className="grid grid-cols-1 gap-px bg-void p-px xl:grid-cols-12">
         <div className="xl:col-span-7">
           <Panel title="결정 대기" count={pending.length} className="h-full">
             {pending.length === 0 ? (

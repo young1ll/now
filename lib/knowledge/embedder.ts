@@ -142,9 +142,12 @@ const queryFailures = new Map<string, { until: number; message: string }>();
 
 export type QueryEmbedOpts = { fetchImpl?: typeof fetch; env?: Env; timeoutMs?: number; now?: number };
 
-/** 정규화된 질의 → 벡터. LRU 500개 (키 = 공간 설정 + 질의) — 에이전트는 비슷한 질의를 반복한다. */
+/**
+ * 정규화된 질의 → 벡터. LRU 500개 (키 = 공간 설정 + 질의) — 에이전트는 비슷한 질의를 반복한다.
+ * 질의도 문서 배치처럼 비밀값을 가린 뒤 보낸다 (§3.3: 임베딩 제공자로 나가는 텍스트) — 캐시 키도 가린 값이다.
+ */
 export async function embedQuery(space: EmbeddingSpace, query: string, o: QueryEmbedOpts = {}): Promise<Float32Array> {
-  const q = query.normalize("NFKC").trim().replace(/\s+/g, " ");
+  const q = redactSecrets(query.normalize("NFKC")).trim().replace(/\s+/g, " ");
   // 공간 id 만으로는 부족하다 (DB 를 새로 만들면 id 가 되풀이된다) — 벡터를 결정하는 설정을 모두 키에
   const spaceKey = [space.id, space.created_at, space.provider, space.model, space.base_url, space.query_prefix].join("\u0000");
   const key = `${spaceKey}\u0000${q}`;

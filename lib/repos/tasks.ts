@@ -61,10 +61,14 @@ const ORDER = `
 export function listTasks(
   db: DB,
   scope: Scope,
-  filter: { view?: "open" | "done" | "all"; clientId?: number } = {},
+  filter: { view?: "open" | "done" | "all"; clientId?: number; /** 한 업무만 (객체 상세) */ id?: number } = {},
 ): TaskRow[] {
   const [where, params] = scopeWhere(scope, "t.business_id");
   const conds = [where];
+  if (filter.id !== undefined) {
+    conds.push("t.id = ?");
+    params.push(filter.id);
+  }
   const view = filter.view ?? "open";
   if (view === "open") conds.push("t.status != 'done'");
   if (view === "done") conds.push("t.status = 'done'");

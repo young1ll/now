@@ -12,6 +12,9 @@ import { parseRef } from "@/lib/ontology/graph";
 import { objectDef } from "@/lib/ontology/objects";
 import { type SearchParams, one } from "@/lib/params";
 
+/** 목록 한 번에 그리는 행 수 */
+const PAGE = 200;
+
 /** 객체 탐색기 — 열 기반: 목록 | 선택한 객체 | 연결된 객체. 경계를 끌어 너비 조정. */
 export default async function ExplorerPage({ params, searchParams }: { params: Promise<{ type: string }>; searchParams: SearchParams }) {
   const { type } = await params;
@@ -36,11 +39,16 @@ export default async function ExplorerPage({ params, searchParams }: { params: P
     counts ? (v ? (counts[v] ?? 0) : Object.values(counts).reduce((a, b) => a + b, 0)) : v ? listed.filter((r) => r.props[def.facet!.key] === v).length : listed.length;
   const statuses = [...new Map(all.filter((r) => r.status).map((r) => [r.status!.label, r.status!])).values()];
   const rows = status ? all.filter((r) => r.status?.label === status) : all;
+  // 목록은 앞부분만 그린다 (업무 수만 개를 한 화면에 그리면 HTML 이 수십 MB) — "더 보기"로 늘리고, 찾을 때는 검색
+  const limit = Math.max(PAGE, Number(one(sp.limit)) || PAGE);
+  const shown = rows.length > limit ? rows.slice(0, limit) : rows;
+  // 선택한 객체가 잘린 뒤쪽에 있으면 그 행도 보이게
+  const selRow = sel && !shown.some((r) => r.ref.id === sel) ? rows.find((r) => r.ref.id === sel) : undefined;
   const path = `/o/${type}`;
   const create = def.createAction ? getAction(def.createAction) : undefined;
   const keep = (patch: Record<string, string | undefined>) => {
     const u = new URLSearchParams();
-    for (const [k, v] of Object.entries({ q, facet, status, sel: sel ? String(sel) : undefined, sub: one(sp.sub), ...patch })) if (v) u.set(k, v);
+    for (const [k, v] of Object.entries({ q, facet, status, sel: sel ? String(sel) : undefined, sub: one(sp.sub), limit: limit > PAGE ? String(limit) : undefined, ...patch })) if (v) u.set(k, v);
     return u;
   };
   const href = (patch: Record<string, string | undefined>) => `${path}?${keep(patch)}`;
@@ -114,7 +122,7 @@ export default async function ExplorerPage({ params, searchParams }: { params: P
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => {
+                {[...shown, ...(selRow ? [selRow] : [])].map((r) => {
                   const active = r.ref.id === sel;
                   return (
                     <tr key={r.displayId} className={active ? "[&>td]:bg-primary/15" : ""}>
@@ -132,6 +140,13 @@ export default async function ExplorerPage({ params, searchParams }: { params: P
                 })}
               </tbody>
             </table>
+          )}
+          {rows.length > shown.length && (
+            <div className="flex items-center gap-2 border-t border-line-soft px-3 py-2 text-[12px] text-fg-3">
+              <span className="mono">{shown.length} / {rows.length}</span>
+              <Link href={href({ limit: String(limit + PAGE) })} className="btn btn-sm">{PAGE}개 더 보기</Link>
+              <span>찾는 것이 있으면 검색하세요.</span>
+            </div>
           )}
         </Column>
         <Column title={sel ? "선택한 객체" : "미리보기"} actions={sel && <Link href={href({ sel: undefined, sub: undefined })} className="btn-minimal btn-sm" aria-label="닫기"><Icon name="close" size={10} /></Link>}>

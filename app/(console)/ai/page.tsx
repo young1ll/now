@@ -7,6 +7,7 @@ import { AutoRefresh, CopyButton } from "@/components/client";
 import { Icon } from "@/components/icons";
 import { Callout, Empty, PageHeader, Panel, Tabs, Tag, timeAgo } from "@/components/ui";
 import { PROVIDER_INFO } from "@/lib/ai/providers";
+import { promptHeadline } from "@/lib/events/prompt";
 import { currentScope } from "@/lib/context";
 import { db } from "@/lib/db";
 import { getAction } from "@/lib/ontology/execute";
@@ -51,7 +52,7 @@ export default async function AiPage({ searchParams }: { searchParams: SearchPar
       <Tabs current={tab} items={[{ key: "runtime", label: "내장 런타임", href: "/ai" }, { key: "connect", label: "외부 AI 접속 가이드", href: "/ai?tab=connect" }]} />
 
       {tab === "runtime" ? (
-        <div className="grid gap-px bg-void p-px xl:grid-cols-12">
+        <div className="grid grid-cols-1 gap-px bg-void p-px xl:grid-cols-12">
           <div className="flex flex-col gap-px xl:col-span-7">
             <Panel title="AI 프로필" count={profiles.length} flush>
               {profiles.length === 0 ? (
@@ -87,7 +88,7 @@ export default async function AiPage({ searchParams }: { searchParams: SearchPar
                         <td><Link href={`/ai/sessions/${s.id}`} className="mono text-primary-fg hover:underline">#{s.id}</Link><div className="mono text-[10.5px] text-fg-4">{timeAgo(s.started_at)}</div></td>
                         <td className="text-[12px]">{s.profile_name}{s.trigger_run_id && <div className="text-[10.5px] text-fg-4">트리거</div>}</td>
                         <td className="max-w-[360px]">
-                          <div className="truncate text-fg-2">{s.prompt.split("\n")[0]}</div>
+                          <div className="truncate text-fg-2">{promptHeadline(s.prompt, s.trigger_run_id ? `트리거 실행 #${s.trigger_run_id}` : undefined)}</div>
                           <div className={`truncate text-[11.5px] ${s.error ? "text-danger-fg" : "text-fg"}`}>{s.error ?? s.final_text.split("\n")[0]}</div>
                         </td>
                         <td className="num">{s.tool_calls}</td>
@@ -128,7 +129,7 @@ export default async function AiPage({ searchParams }: { searchParams: SearchPar
           </div>
         </div>
       ) : (
-        <div className="grid gap-px bg-void p-px xl:grid-cols-2">
+        <div className="grid grid-cols-1 gap-px bg-void p-px xl:grid-cols-2">
           <Panel title="Claude Code · Claude Desktop (MCP)">
             <div className="space-y-3">
               <Snippet title="Claude Code — HTTP" code={`claude mcp add --transport http now ${origin}/api/mcp \\\n  --header "Authorization: Bearer $NOW_AGENT_TOKEN"`} />

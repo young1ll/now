@@ -56,7 +56,7 @@ export default async function TriggerPage({ params, searchParams }: { params: Pr
           </>
         }
       />
-      <div className="grid gap-px bg-void p-px xl:grid-cols-12">
+      <div className="grid grid-cols-1 gap-px bg-void p-px xl:grid-cols-12">
         <div className="flex flex-col gap-px xl:col-span-7">
           <Panel title="실행 기록" count={runs.length} flush>
             {runs.length === 0 ? <Empty icon="event">아직 실행되지 않았습니다.</Empty> : <TriggerRunTable runs={runs} showTrigger={false} />}

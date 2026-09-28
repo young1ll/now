@@ -203,9 +203,13 @@ function syncPaidStatus(db: DB, invoiceId: number) {
 
 // ── 지출 ───────────────────────────────────────────────
 
-export function listExpenses(db: DB, scope: Scope, month?: string): (Expense & { business_name: string; currency: string })[] {
+export function listExpenses(db: DB, scope: Scope, month?: string, id?: number): (Expense & { business_name: string; currency: string })[] {
   const [where, params] = scopeWhere(scope, "e.business_id");
   const conds = [where];
+  if (id !== undefined) {
+    conds.push("e.id = ?");
+    params.push(id);
+  }
   if (month) {
     conds.push("substr(e.spent_at, 1, 7) = ?");
     params.push(month);

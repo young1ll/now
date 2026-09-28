@@ -36,7 +36,7 @@ export default async function AutomationsPage({ searchParams }: { searchParams: 
           이 프로세스에서 워커가 돌고 있지 않습니다 (NOW_WORKER=off). 별도로 <code className="mono">npm run worker</code> 를 실행하세요.
         </div>
       )}
-      <div className="grid gap-px bg-void p-px xl:grid-cols-12">
+      <div className="grid grid-cols-1 gap-px bg-void p-px xl:grid-cols-12">
         <div className="flex flex-col gap-px xl:col-span-7">
           <Panel title="트리거" count={triggers.length} flush>
             {triggers.length === 0 ? (

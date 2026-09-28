@@ -17,7 +17,7 @@ export default function EventsPage() {
   return (
     <>
       <PageHeader icon="event" eyebrow="자동화" title="이벤트" meta="모든 변화가 흐르는 이벤트 버스. 에이전트는 list_events · SSE(/api/v1/events/stream) · now events --follow 로 구독합니다." live />
-      <div className="grid gap-px bg-void p-px xl:grid-cols-12">
+      <div className="grid grid-cols-1 gap-px bg-void p-px xl:grid-cols-12">
         <div className="xl:col-span-6">
           <Panel title="실시간 이벤트" flush className="h-full">
             <LiveEvents initial={events} />
