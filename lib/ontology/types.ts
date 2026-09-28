@@ -1,4 +1,4 @@
-export const OBJECT_TYPES = ["business", "client", "task", "invoice", "expense", "note", "agent"] as const;
+export const OBJECT_TYPES = ["business", "client", "task", "invoice", "expense", "note", "agent", "memory"] as const;
 export type ObjectType = (typeof OBJECT_TYPES)[number];
 
 export type Ref = { type: ObjectType; id: number };

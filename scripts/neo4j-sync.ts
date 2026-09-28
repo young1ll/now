@@ -7,7 +7,7 @@ import { db } from "@/lib/db";
 import { type Graph, overview } from "@/lib/ontology/graph";
 import { OBJECT_TYPES } from "@/lib/ontology/types";
 
-const LABEL: Record<string, string> = { business: "Business", client: "Client", task: "Task", invoice: "Invoice", expense: "Expense", note: "Note", agent: "Agent" };
+const LABEL: Record<string, string> = { business: "Business", client: "Client", task: "Task", invoice: "Invoice", expense: "Expense", note: "Note", agent: "Agent", memory: "Memory" };
 const relType = (linkType: string) => linkType.replace(/^[a-z]+\./, "").replace(/[^a-zA-Z0-9]/g, "_").toUpperCase() || "LINK";
 
 export function toStatements(g: Graph): { statement: string; parameters: Record<string, unknown> }[] {

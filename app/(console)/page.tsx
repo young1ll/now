@@ -92,13 +92,13 @@ export default async function OperationsPage({ searchParams }: { searchParams: S
                           <td className="mono text-fg-3">{s.since ? `${daysBetween(s.since, o.on)}d` : "—"}</td>
                           <td>
                             <div className="flex flex-wrap gap-1">
-                              {s.suggested.map((a) => {
+                              {s.suggested.map((a, i) => {
                                 const def = getAction(a.action);
                                 const tp = def?.target?.param;
                                 const fixed = tp ? { [tp]: a.params[tp] } : {};
                                 const soft = Object.fromEntries(Object.entries(a.params).filter(([k]) => k !== tp));
                                 return (
-                                  <Link key={a.action} href={actHref("/", a.action, fixed, soft)} className="btn btn-sm">
+                                  <Link key={`${a.action}:${i}`} href={actHref("/", a.action, fixed, soft)} className="btn btn-sm">
                                     {a.label}
                                   </Link>
                                 );

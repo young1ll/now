@@ -22,6 +22,8 @@ export type RecallQuery = {
   types?: ObjectType[];
   k?: number;
   mode?: RecallMode;
+  /** 대체·보관된 기억(superseded · retired)도 포함 (기본 제외) */
+  includeInactive?: boolean;
 };
 
 export type RecallHit = {
@@ -40,6 +42,8 @@ export type RecallHit = {
   via?: { from: string; label: string };
   /** 의미 목록으로 들어온 경우: 가장 가까운 구획의 코사인 유사도 */
   similarity?: number;
+  /** 기억이면 원래 상태·오염 여부 (점수에 상태 가중이 곱해져 있다) */
+  memory?: { status: string; tainted: boolean; kind: string };
 };
 
 export type RecallResult = {
@@ -77,7 +81,7 @@ export type Term = { text: string; forms: string[] };
 /** 유형을 가리키는 말. 한국어 명사구는 핵심어가 끝에 오므로("Acme 담당 업무") 마지막 검색어만 유형 힌트로 쓴다. */
 const TYPE_WORDS: Record<string, ObjectType> = {
   고객: "client", 거래처: "client", 리드: "client", 업무: "task", 할일: "task", 작업: "task", 청구서: "invoice", 인보이스: "invoice",
-  문서: "note", 노트: "note", 메모: "note", 지출: "expense", 비용: "expense", 에이전트: "agent", 사업: "business",
+  문서: "note", 노트: "note", 메모: "note", 지출: "expense", 비용: "expense", 에이전트: "agent", 사업: "business", 기억: "memory",
 };
 
 /** 검색어 → (원형, 조사·어미 뗀 형태). 둘 중 하나만 맞아도 일치로 본다 (명사 끝 글자가 조사처럼 생긴 경우 대비). */
@@ -301,6 +305,7 @@ function skippedVector(db: DB, o: RecallOpts): RecallResult["vector"] {
 // ── 관계 ─────────────────────────────────────────────
 
 const EDGE_WEIGHT = { custom: 1, intrinsic: 0.6, derived: 0 } as const;
+const MEMORY_EDGE = 0.3;
 const GRAPH_SEEDS = 8;
 
 type GraphCand = { key: string; ref: Ref; score: number; via: { from: string; label: string } };
@@ -308,10 +313,15 @@ type GraphCand = { key: string; ref: Ref; score: number; via: { from: string; la
 function graphExpand(db: DB, seeds: Ref[]): GraphCand[] {
   const out = new Map<string, GraphCand>();
   seeds.slice(0, GRAPH_SEEDS).forEach((seed, rank) => {
+    const memSeen = new Set<number>();
     for (const e of edgesOf(db, seed)) {
-      const w = EDGE_WEIGHT[e.source];
-      if (!w) continue;
       const other = refKey(e.from) === refKey(seed) ? e.to : e.from;
+      // 기억은 대상에 붙은 주석이지 구조적 관계가 아니다 — 이웃으로 올 때는 약하게, 씨앗당 한 번만
+      // (대상 + 근거로 두 번 이어진 기억이 고객의 실제 관계보다 앞서거나, 허브 고객의 기억들이 관계 목록을 채우지 않도록)
+      if (other.type === "memory" && memSeen.has(other.id)) continue;
+      if (other.type === "memory") memSeen.add(other.id);
+      const w = EDGE_WEIGHT[e.source] * (other.type === "memory" ? MEMORY_EDGE : 1);
+      if (!w) continue;
       // 사업은 거의 모든 객체와 연결된 허브 — 관계 신호가 아니라 범위(scope)다
       if (other.type === "business") continue;
       const s = w / (1 + rank);
@@ -331,6 +341,25 @@ const TYPE_BOOST = 1.5;
 const MAX_GRAPH_ONLY = 3;
 const WEIGHT: Record<Why, number> = { ref: 3, lexical: 1, semantic: 1, about: 0.7, graph: 0.5 };
 
+/**
+ * 기억의 상태 가중 (융합 점수에 곱한다) — 사람이 확인한 것일수록 앞에. 오염(외부 출처)은 ×0.7.
+ * 대체·보관된 기억은 기본적으로 결과에서 빠지고, include_inactive 일 때만 낮은 가중으로 나온다.
+ */
+export const MEMORY_STATUS_WEIGHT: Record<string, number> = { verified: 1, active: 0.85, proposed: 0.6, disputed: 0.4, superseded: 0.3, retired: 0.3 };
+export const TAINT_WEIGHT = 0.7;
+const INACTIVE = new Set(["superseded", "retired"]);
+
+type MemState = { status: string; tainted: number; kind: string };
+
+function memoryStates(db: DB, ids: number[]): Map<number, MemState> {
+  const out = new Map<number, MemState>();
+  for (let i = 0; i < ids.length; i += 500) {
+    const part = ids.slice(i, i + 500);
+    for (const r of db.prepare(`SELECT id, status, tainted, kind FROM memories WHERE id IN (${part.map(() => "?").join(",")})`).all(...part) as (MemState & { id: number })[]) out.set(r.id, r);
+  }
+  return out;
+}
+
 /** 관계 확장의 씨앗: 참조 → 어휘·의미 상위를 번갈아 (각 목록의 순위를 유지하며 중복 제거) */
 function seedsOf(refs: Ref[], ...lists: { ref: Ref }[][]): Ref[] {
   const out = new Map<string, Ref>();
@@ -349,7 +378,15 @@ export async function recall(db: DB, q: RecallQuery, o: RecallOpts = {}): Promis
   const hint = <T extends { ref: Ref; score: number; key: string }>(xs: T[]) =>
     typeHint ? xs.map((x) => (x.ref.type === typeHint ? { ...x, score: x.score * TYPE_BOOST } : x)).sort((a, b) => b.score - a.score || a.key.localeCompare(b.key)) : xs;
 
-  const lex = mode === "vector" ? [] : hint(lexical(db, terms, q.scope, q.types));
+  // 보관된 기억은 결과뿐 아니라 관계 확장의 씨앗도 되지 않게 미리 뺀다
+  const active = <T extends { ref: Ref }>(xs: T[]): T[] => {
+    if (q.includeInactive) return xs;
+    const ids = xs.filter((x) => x.ref.type === "memory").map((x) => x.ref.id);
+    if (!ids.length) return xs;
+    const st = memoryStates(db, ids);
+    return xs.filter((x) => x.ref.type !== "memory" || (st.has(x.ref.id) && !INACTIVE.has(st.get(x.ref.id)!.status)));
+  };
+  const lex = mode === "vector" ? [] : active(hint(lexical(db, terms, q.scope, q.types)));
   // 의미: 식별자만 있는 질의(CLT-0003)는 임베딩하지 않는다 — 그 밖에는 한 글자 질의(돈·차)나 불용어뿐인 질의도
   // 임베딩한다 (어휘 검색어가 비어도 뜻은 있을 수 있다)
   const idOnly = refs.length > 0 && !terms.length;
@@ -359,7 +396,7 @@ export async function recall(db: DB, q: RecallQuery, o: RecallOpts = {}): Promis
       : idOnly
         ? { list: [], vector: skippedVector(db, o) }
         : await semantic(db, q.query, q.scope, q.types, k, o);
-  const semList = hint(sem.list);
+  const semList = active(hint(sem.list));
   const lists: [Why, { key: string; ref: Ref }[]][] =
     mode === "vector"
       ? [["semantic", semList]]
@@ -386,6 +423,18 @@ export async function recall(db: DB, q: RecallQuery, o: RecallOpts = {}): Promis
       if (!cur.why.includes(why)) cur.why.push(why);
       fused.set(item.key, cur);
     });
+  }
+
+  // 기억: 상태 가중 · 오염 가중, 보관된 기억은 (요청이 없으면) 제외
+  const mems = memoryStates(db, [...fused.values()].filter((v) => v.ref.type === "memory").map((v) => v.ref.id));
+  for (const [key, v] of fused) {
+    if (v.ref.type !== "memory") continue;
+    const m = mems.get(v.ref.id);
+    if (!m || (INACTIVE.has(m.status) && !q.includeInactive)) {
+      fused.delete(key);
+      continue;
+    }
+    v.score *= (MEMORY_STATUS_WEIGHT[m.status] ?? 0.5) * (m.tainted ? TAINT_WEIGHT : 1);
   }
 
   // 표시 정보 · 범위 · 유형 필터 (그래프로 들어온 객체도 같은 규칙)
@@ -423,6 +472,7 @@ export async function recall(db: DB, q: RecallQuery, o: RecallOpts = {}): Promis
       snippet: l ? snippetOf(l.best, terms) : sm ? snippetOf(sm.best, terms) : snippetOf(card.get(v.ref.type, v.ref.id) as ChunkRow | undefined, []),
       via: g && !l && !sm ? { from: viaNode ? `${viaNode.displayId} ${viaNode.title}` : g.via.from, label: g.via.label } : undefined,
       similarity: sm ? Math.round(sm.sim * 1000) / 1000 : undefined,
+      ...(v.ref.type === "memory" && mems.has(v.ref.id) ? { memory: { status: mems.get(v.ref.id)!.status, tainted: !!mems.get(v.ref.id)!.tainted, kind: mems.get(v.ref.id)!.kind } } : {}),
     });
   }
   return {

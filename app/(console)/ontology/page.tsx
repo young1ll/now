@@ -25,7 +25,7 @@ export default async function OntologyPage({ searchParams }: { searchParams: Sea
   const counts = new Map(
     (db().prepare("SELECT link_type, COUNT(*) AS n FROM links GROUP BY 1").all() as { link_type: string; n: number }[]).map((r) => [r.link_type, r.n]),
   );
-  const objCount = (t: string) => (db().prepare(`SELECT COUNT(*) AS n FROM ${{ business: "businesses", client: "clients", task: "tasks", invoice: "invoices", expense: "expenses", note: "notes", agent: "agents" }[t]}`).get() as { n: number }).n;
+  const objCount = (t: string) => (db().prepare(`SELECT COUNT(*) AS n FROM ${{ business: "businesses", client: "clients", task: "tasks", invoice: "invoices", expense: "expenses", note: "notes", agent: "agents", memory: "memories" }[t]}`).get() as { n: number }).n;
 
   return (
     <>

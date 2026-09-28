@@ -3,9 +3,10 @@
 // (바뀔 때마다 재색인·재임베딩 비용이 들고, 검색 신호로는 잡음이다).
 import crypto from "node:crypto";
 import type { DB } from "@/lib/db";
-import { CLIENT_KIND, CLIENT_STATUS, INTERACTION_KIND, INVOICE_STATUS, PRIORITY, RECURRENCE, TASK_STATUS } from "@/lib/labels";
+import { CLIENT_KIND, CLIENT_STATUS, INTERACTION_KIND, INVOICE_STATUS, MEMORY_KIND, MEMORY_ORIGIN, MEMORY_STATUS, PRIORITY, RECURRENCE, TASK_STATUS } from "@/lib/labels";
 import { displayId } from "@/lib/ontology/ids";
 import { OBJECTS } from "@/lib/ontology/objects";
+import { creatorName } from "@/lib/repos/memories";
 import { OBJECT_TYPES, type ObjectType, type Ref } from "@/lib/ontology/types";
 
 export type OwnerDoc = { ref: Ref; businessId: number | null; chunks: string[] };
@@ -60,14 +61,19 @@ const join = (xs: (string | null | undefined | false)[]) => xs.filter(Boolean).j
 
 type CustomLink = { label: string; other: string; note: string };
 
-/** 사용자 정의 링크를 카드에 "소개자: CLT-0001 한빛상사" 형태로 넣는다 (양방향) */
+/**
+ * 사용자 정의 링크를 카드에 "소개자: CLT-0001 한빛상사" 형태로 넣는다 (양방향).
+ * 기억(memory)과의 링크는 넣지 않는다 — 기억 문장이 대상 카드에 복제되면 보관된 기억도 대상 카드로 검색되고,
+ * 기억 상태가 바뀔 때마다 대상 카드를 다시 써야 한다. 기억은 자기 카드로 찾고, 관계는 그래프 확장이 잇는다.
+ */
 function customLinks(db: DB, type: ObjectType): Map<number, CustomLink[]> {
-  const rows = db
+  const rows = (db
     .prepare(
       `SELECT l.*, t.label, t.inverse_label FROM links l JOIN link_types t ON t.name = l.link_type
        WHERE l.from_type = ? OR l.to_type = ?`,
     )
-    .all(type, type) as { from_type: ObjectType; from_id: number; to_type: ObjectType; to_id: number; label: string; inverse_label: string; note: string }[];
+    .all(type, type) as { from_type: ObjectType; from_id: number; to_type: ObjectType; to_id: number; label: string; inverse_label: string; note: string }[])
+    .filter((r) => type === "memory" || (r.from_type !== "memory" && r.to_type !== "memory"));
   const refs: Ref[] = rows.flatMap((r) => [{ type: r.from_type, id: r.from_id }, { type: r.to_type, id: r.to_id }]);
   const titles = titlesOf(db, refs);
   const out = new Map<number, CustomLink[]>();
@@ -88,6 +94,7 @@ const TITLE_SQL: Record<ObjectType, string> = {
   expense: "SELECT id, description AS t FROM expenses",
   note: "SELECT id, title AS t FROM notes",
   agent: "SELECT id, name AS t FROM agents",
+  memory: "SELECT id, statement AS t FROM memories",
 };
 
 function titlesOf(db: DB, refs: Ref[]): Map<string, string> {
@@ -115,7 +122,8 @@ type Row = Record<string, unknown> & { id: number };
  */
 export function renderOwners(db: DB, type: ObjectType, ids?: number[]): Map<number, OwnerDoc> {
   const out = new Map<number, OwnerDoc>();
-  const links = customLinks(db, type);
+  // 기억 카드는 링크를 대상·근거 줄로 따로 그린다 — 사용자 정의 링크 줄(linkLines)을 쓰지 않으므로 읽지 않는다
+  const links = type === "memory" ? new Map<number, CustomLink[]>() : customLinks(db, type);
   const q = (sql: string) => db.prepare(`${sql} ${inClause(ids)}`).all(...(ids ?? [])) as Row[];
   const linkLines = (id: number) => (links.get(id) ?? []).map((l) => `${l.label}: ${l.other}${l.note ? ` (${l.note})` : ""}`);
   const put = (id: number, businessId: number | null, chunks: string[]) => out.set(id, { ref: { type, id }, businessId, chunks });
@@ -204,6 +212,33 @@ export function renderOwners(db: DB, type: ObjectType, ids?: number[]): Map<numb
         put(a.id, null, [join([header(type, a.id, String(a.name)), line("설명", a.description), line("상태", a.status)])]);
       }
       break;
+    case "memory": {
+      // 기억 = 문장 하나. 대상·근거는 이름 + 식별자로 (식별자로도 찾고, 대상이 지워지면 식별자로 다시 렌더된다)
+      const rows = q("SELECT x.* FROM memories x");
+      const lk = db.prepare("SELECT link_type, to_type, to_id FROM links WHERE from_type = 'memory' AND from_id = ? AND link_type IN ('about','evidenced_by') ORDER BY id");
+      const linked = new Map(rows.map((m) => [m.id, lk.all(m.id) as { link_type: string; to_type: ObjectType; to_id: number }[]]));
+      const titles = titlesOf(db, [...linked.values()].flat().map((l) => ({ type: l.to_type, id: l.to_id })));
+      const names = (m: Row, t: string) =>
+        (linked.get(m.id) ?? []).filter((l) => l.link_type === t).map((l) => `${titles.get(`${l.to_type}:${l.to_id}`) ?? "(삭제됨)"} (${displayId(l.to_type, l.to_id)})`).join(", ");
+      for (const m of rows) {
+        const vf = m.valid_from as string | null;
+        const vt = m.valid_to as string | null;
+        put(m.id, (m.business_id as number | null) ?? null, [
+          join([
+            header(type, m.id, String(m.statement), MEMORY_STATUS[m.status as keyof typeof MEMORY_STATUS]?.label),
+            line("종류", MEMORY_KIND[m.kind as keyof typeof MEMORY_KIND]),
+            line("대상", names(m, "about")),
+            line("근거", names(m, "evidenced_by")),
+            line("신뢰도", Number(m.confidence).toFixed(2)),
+            vf || vt ? line("유효기간", `${vf ?? ""} ~ ${vt ?? ""}`) : null,
+            line("출처", `${MEMORY_ORIGIN[m.origin as keyof typeof MEMORY_ORIGIN] ?? m.origin} ${creatorName(db, String(m.created_by))}`),
+            m.tainted ? "외부 출처(미검증)" : null,
+            m.pinned ? "고정" : null,
+          ]),
+        ]);
+      }
+      break;
+    }
   }
   return out;
 }

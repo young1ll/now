@@ -80,12 +80,13 @@ export function Columns({
   };
 
   return (
-    <div className={`flex min-h-0 flex-1 flex-col md:flex-row ${className}`} onPointerMove={onMove} onPointerUp={onUp}>
+    // 좁은 화면: 열을 세로로 쌓고 내용 높이만큼 (h-full 부모에 눌려 0 에 가깝게 줄지 않도록) — 페이지가 스크롤한다
+    <div className={`flex min-h-0 flex-1 flex-col max-md:flex-none md:flex-row ${className}`} onPointerMove={onMove} onPointerUp={onUp}>
       {panes.map((pane, i) => (
         <div key={i} className="contents">
           <section
             data-col={i}
-            className={`flex min-h-0 min-w-0 flex-col overflow-hidden bg-panel max-md:w-full max-md:border-b max-md:border-line ${i === g ? "md:flex-1" : "md:w-[var(--col-w)] md:shrink-0"}`}
+            className={`flex min-h-0 min-w-0 flex-col overflow-hidden bg-panel max-md:w-full max-md:shrink-0 max-md:border-b max-md:border-line ${i === g ? "md:flex-1" : "md:w-[var(--col-w)] md:shrink-0"}`}
             style={i === g ? undefined : ({ "--col-w": `${width(widths, i)}px` } as React.CSSProperties)}
           >
             {pane}

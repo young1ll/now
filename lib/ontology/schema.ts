@@ -56,6 +56,19 @@ export const PROPERTIES: Record<ObjectType, PropertyDef[]> = {
     { key: "status", label: "상태", type: "enum", description: "active | suspended | revoked" },
     { key: "last_seen_at", label: "최근 접속", type: "datetime" },
   ],
+  memory: [
+    { key: "statement", label: "문장", type: "text", description: "자기완결적인 한 문장 (대상을 이름으로)" },
+    { key: "kind", label: "종류", type: "enum", description: "fact | preference | lesson | procedure_hint | caution" },
+    { key: "status", label: "상태", type: "enum", description: "proposed | active | verified | disputed | superseded | retired" },
+    { key: "confidence", label: "신뢰도", type: "number", description: "0..1" },
+    { key: "origin", label: "출처", type: "enum", description: "human | agent | consolidation | import" },
+    { key: "tainted", label: "외부 출처(미검증)", type: "boolean", description: "비신뢰 입력(메일·웹훅)에서 유래 — 사람 확인 전에는 확정될 수 없다" },
+    { key: "pinned", label: "고정", type: "boolean", description: "항상 컨텍스트 팩에 포함" },
+    { key: "valid_from", label: "유효 시작", type: "date" },
+    { key: "valid_to", label: "유효 종료", type: "date" },
+    { key: "use_count", label: "사용 수", type: "number", description: "컨텍스트 포함·인용 횟수 (텔레메트리)" },
+    { key: "last_used_at", label: "최근 사용", type: "datetime" },
+  ],
 };
 
 export type LinkEnd = ObjectType | "*";
@@ -103,12 +116,19 @@ export const DERIVED_LINKS: LinkTypeDef[] = [
   },
 ];
 
+/**
+ * 시스템 링크 유형 — 기억 계층이 의존한다 (마이그레이션 6). link_type.delete 로 지울 수 없다.
+ * contradicts · promoted_to 는 기억 상태와 함께 움직이므로 memory.* 액션으로만 만든다 (link.create 거부).
+ */
+export const SYSTEM_LINK_TYPES = ["about", "evidenced_by", "contradicts", "promoted_to"] as const;
+export const ACTION_MANAGED_LINK_TYPES: readonly string[] = ["contradicts", "promoted_to"];
+
 type CustomRow = {
   name: string;
   label: string;
   inverse_label: string;
   from_type: ObjectType;
-  to_type: ObjectType;
+  to_type: LinkEnd;
   cardinality: "one" | "many";
   description: string;
 };

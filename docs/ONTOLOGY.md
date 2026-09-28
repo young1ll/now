@@ -14,7 +14,7 @@ v0.3 에서 다음을 갖추면서 온톨로지의 핵심 요건을 채웠다.
 | 행동이 온톨로지에 묶인다 | 액션은 객체 유형·대상에 바인딩되고, 객체 상태에 따라 가능한 액션만 노출 (`actionsFor`) |
 | 변경 이력이 그래프에 남는다 | 모든 액션 실행이 객체 참조(`action_run_refs`)와 이벤트로 기록 → "누가 무엇을 바꿨나" 가 관계로 보인다 |
 
-아직 없는 것 (로드맵): 사용자 정의 **객체 유형**(현재는 7종 고정), 사용자 정의 속성, 파생 속성 함수(예: 고객 LTV), 링크 속성.
+아직 없는 것 (로드맵): 사용자 정의 **객체 유형**(현재는 8종 고정 — v0.4 M3 에서 `memory` 추가), 사용자 정의 속성, 파생 속성 함수(예: 고객 LTV), 링크 속성.
 
 ## 왜 Neo4j 를 기록 원본으로 쓰지 않았나
 
@@ -55,3 +55,21 @@ MATCH p=(:Client)-[:REFERRED_BY*1..3]->(:Client) RETURN p
 | depends_on | task → task | 사용자 정의 |
 | documents | note → task | 사용자 정의 |
 | cites | invoice → note | 사용자 정의 |
+| about | memory → * | 시스템 (기억) |
+| evidenced_by | memory → * | 시스템 (기억) |
+| contradicts | memory → memory | 시스템 (기억) — `memory.*` 액션만 |
+| promoted_to | memory → * (하나) | 시스템 (기억) — `memory.promote` 만 |
+
+## 기억(memory) — 8번째 객체 유형 (v0.4 M3)
+
+구조로 담기 어려운 사실·선호·교훈·절차 힌트·주의를 **한 문장**으로 적은 객체다. 식별자 `MEM-0001`, 참조 `memory:1`, 그래프 색 `#e66767` (dataviz 팔레트 8번째 슬롯).
+설계와 생애는 [MEMORY.md](MEMORY.md) §3 · §13.
+
+- **상태**: `proposed`(에이전트 제안, 미확인) · `active`(쓸 수 있지만 미확인 — M5 자동 착지용) · `verified`(사람 확인) · `disputed`(충돌) · `superseded`(정정·합치기·승격으로 대체) · `retired`(보관)
+- **속성**: statement · kind(fact/preference/lesson/procedure_hint/caution) · status · confidence · origin(human/agent/…) · tainted(외부 비신뢰 출처) · pinned · valid_from/valid_to · use_count · last_used_at
+- **관계**는 1급 링크를 재사용한다: `about`(무엇에 관한가) · `evidenced_by`(근거) · `contradicts`(충돌 상대) · `promoted_to`(구조화된 대체물).
+- **도착 유형 `*`**: 링크 유형의 `to_type` 이 `*` 이면 아무 객체나 도착점이 된다. `link.create` 는 `to_type !== "*"` 일 때만 도착 유형을 검사한다. `link_type.define` 도 `*` 를 받는다.
+- **시스템 링크 유형** 4종은 `link_type.delete` 로 지울 수 없다. `contradicts` · `promoted_to` 는 기억 상태와 함께 움직이므로 `link.create` 로 직접 만들 수 없다 (`about` · `evidenced_by` 는 가능 — 오염된 기억을 `evidenced_by` 로 붙이면 출발 기억도 tainted). 업그레이드 전에 같은 이름의 사용자 유형이 있었으면 마이그레이션 6 이 `<이름>_user` 로 옮긴다.
+- 객체를 지우면 삭제 액션의 `deleteLinksFor` 가 about·근거 링크를 정리한다. 기억 자체는 남는다 (화면에 "대상 없음").
+- 기억과의 링크는 다른 객체의 **검색 카드에 넣지 않는다** (기억 문장이 대상 카드로 복제되면 보관된 기억도 대상 카드로 검색된다). 대신 대상의 이름이 바뀌면 그 대상을 가리키는 기억 카드가 증분 색인에서 다시 만들어진다.
+- 객체 화면(`/o/<type>/<id>`)의 **"AI 가 아는 것"** 패널이 그 객체에 관한 기억을 상태와 함께 보여 준다. 기억 자체의 화면은 `/memory` (열 기반) — `/o/memory/<id>` 는 그리로 보낸다.

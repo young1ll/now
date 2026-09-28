@@ -11,6 +11,7 @@ const P: Record<string, string> = {
   invoice: "M3 1h10v14l-2-1-2 1-2-1-2 1-2-1zM5 5h6M5 8h6M5 11h3",
   expense: "M1 4h14v9H1zM1 7h14M4 10h3",
   note: "M3 1h7l3 3v11H3zM10 1v3h3M5 8h6M5 11h6",
+  memory: "M3 1h10v14l-5-3-5 3zM6 5h4M6 8h4",
   business: "M1 14h14M2 14V5l6-3 6 3v9M6 14v-4h4v4",
   agent: "M4 5h8v8H4zM8 2v3M6 8h1M9 8h1M6 11h4M2 8h2M12 8h2",
   action: "M9 1L3 9h5l-1 6 6-8H8z",

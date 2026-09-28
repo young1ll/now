@@ -43,10 +43,14 @@ export type AgentSession = {
   error: string | null;
   started_at: string;
   finished_at: string | null;
+  /** 세션 시작 때 받은 컨텍스트 팩의 해시 (팩이 비었으면 null) */
+  context_hash: string | null;
+  /** 팩 항목 ref ("memory:12", "note:1" …) */
+  context_refs: string[];
 };
 
-type SessionRow = Omit<AgentSession, "transcript" | "usage"> & { transcript: string; usage: string };
-const parseSession = (r: SessionRow): AgentSession => ({ ...r, transcript: JSON.parse(r.transcript), usage: JSON.parse(r.usage) });
+type SessionRow = Omit<AgentSession, "transcript" | "usage" | "context_refs"> & { transcript: string; usage: string; context_refs: string };
+const parseSession = (r: SessionRow): AgentSession => ({ ...r, transcript: JSON.parse(r.transcript), usage: JSON.parse(r.usage), context_refs: JSON.parse(r.context_refs ?? "[]") });
 
 export function listProfiles(db: DB): (AiProfile & { agent_name: string; agent_status: string; sessions_24h: number })[] {
   return db
@@ -115,6 +119,11 @@ export function saveSession(db: DB, id: number, s: Partial<Pick<AgentSession, "s
     s.finished ? new Date().toISOString() : cur.finished_at,
     id,
   );
+}
+
+/** 세션이 받은 컨텍스트 팩 (재현용: 해시 + 항목 ref) */
+export function saveSessionContext(db: DB, id: number, hash: string | null, refs: string[]) {
+  db.prepare("UPDATE agent_sessions SET context_hash = ?, context_refs = ? WHERE id = ?").run(hash, JSON.stringify(refs), id);
 }
 
 export function getSession(db: DB, id: number): AgentSession | undefined {

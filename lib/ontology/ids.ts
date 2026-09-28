@@ -8,6 +8,7 @@ export const PREFIX: Record<ObjectType, string> = {
   expense: "EXP",
   note: "DOC",
   agent: "AGT",
+  memory: "MEM",
 };
 
 /** 사람이 읽는 객체 식별자: CLT-0003 */

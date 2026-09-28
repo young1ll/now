@@ -10,12 +10,20 @@ const HELP = `now — Now 사업 운영 체제 CLI (에이전트용)
   now signals [--severity critical]      주의가 필요한 상태 = 할 일 큐 (제안 액션 포함)
   now ontology                           객체 유형 · 속성 · 링크 유형 · 액션
   now recall <자연어 질의> [--about ref] [--k 10]   내용·관계를 함께 보는 회상 검색 (찾을 때 먼저)
-  now search <type> [검색어]             type: client task invoice expense note business agent
+  now search <type> [검색어]             type: client task invoice expense note business agent memory
   now get <ref>                          객체 상세 (ref: client:3 또는 CLT-0003)
   now traverse <ref> [--depth 2]         그래프 이웃
   now path <ref> <ref>                   두 객체 사이 관계 경로
   now actions [type]                     실행 가능한 액션과 입력 스키마
   now events [--after ID] [--type signal.] [--follow]   이벤트 로그 / 실시간 구독
+
+기억 (AI 가 제안하고 사람이 확인한다)
+  now context [--about ref,ref] [--task "하려는 일"] [--budget 2000]   작업용 기억·문서 팩 (<memory-context> 데이터)
+  now remember "<문장>" --kind fact --about ref --evidence ref[,ref] --reason "근거"
+      kind: fact 사실 · preference 선호 · lesson 교훈 · procedure_hint 절차 힌트 · caution 주의
+      문장은 대상을 이름으로 쓴 한 문장 ("한빛상사는 …"), 지시문·비밀값 금지. evidence 1개 이상 필수
+  now memories [--status proposed,active] [--kind fact] [--about ref]   기억 목록
+  now cite <기억 id…>                     팩 밖에서 찾아 쓴 기억의 사용 기록 (답에는 [mem:N] 으로 인용)
 
 쓰기 (정책·승인·감사를 거친다)
   now run <action> '<params JSON>' --reason "근거"
@@ -47,6 +55,7 @@ for (let i = 0; i < argv.length; i++) {
 const BASE = (process.env.NOW_URL || "http://127.0.0.1:3000").replace(/\/$/, "");
 const TOKEN = process.env.NOW_AGENT_TOKEN || "";
 const num = (v) => (v === undefined || v === true ? undefined : Number(v));
+const list = (v) => (v === undefined || v === true ? undefined : String(v).split(",").map((x) => x.trim()).filter(Boolean));
 
 function die(msg, code = 1) {
   process.stderr.write(`now: ${msg}\n`);
@@ -86,6 +95,8 @@ function print(data) {
   if (data && typeof data === "object") {
     if ("severity" in data && "title" in data) return console.log(`[${data.severity}] ${data.title}${data.displayId ? ` (${data.displayId})` : ""}`);
     if ("display_id" in data && "title" in data) return console.log(`${data.display_id}\t${data.status ?? ""}\t${data.title}`);
+    if ("display_id" in data && "statement" in data) return console.log(`${data.display_id}\t${data.status}\t${data.statement}`);
+    if (typeof data.text === "string" && "hash" in data && "items" in data) return console.log(data.text || "(팩 없음 — 관련 기억·문서가 없습니다)");
     if ("run_id" in data) return console.log(`RUN ${data.run_id}\t${data.status}\t${data.action}\t${data.summary ?? data.error ?? ""}`);
     if ("type" in data && "created_at" in data && "payload" in data) return console.log(`${data.id}\t${data.created_at}\t${data.type}\t${data.payload.summary ?? data.payload.title ?? ""}`);
   }
@@ -138,6 +149,27 @@ const commands = {
   path: () => call("find_path", { from: a1, to: a2 }),
   actions: () => call("list_actions", { object_type: a1 }),
   events: () => (flags.follow ? follow() : call("list_events", { after_id: num(flags.after), type: flags.type, limit: num(flags.limit) })),
+  context: () => call("get_context", { about: list(flags.about), task: flags.task === true ? undefined : flags.task, budget_tokens: num(flags.budget), business_id: num(flags.business) }),
+  remember: () => {
+    if (!a1) die('문장이 필요합니다: now remember "<문장>" --kind fact --evidence ref --reason "근거"');
+    if (!flags.reason) die('--reason "근거" 가 필요합니다');
+    if (!flags.evidence) die("--evidence ref 가 필요합니다 (근거 객체 1개 이상)");
+    return call("remember", {
+      statement: a1,
+      kind: flags.kind === undefined || flags.kind === true ? "fact" : flags.kind,
+      about: list(flags.about),
+      evidence: list(flags.evidence),
+      confidence: num(flags.confidence),
+      contradicts: list(flags.contradicts)?.map(Number),
+      reason: flags.reason,
+    });
+  },
+  memories: () => call("list_memories", { status: list(flags.status), kind: flags.kind === true ? undefined : flags.kind, about: flags.about === true ? undefined : flags.about, business_id: num(flags.business), limit: num(flags.limit) }),
+  cite: () => {
+    const ids = pos.slice(1).flatMap((x) => x.split(",")).map((x) => Number(String(x).replace(/^(mem:|MEM-0*)/i, ""))).filter((n) => n > 0);
+    if (!ids.length) die("기억 id 가 필요합니다: now cite 12 15");
+    return call("cite", { memory_ids: ids });
+  },
   run: () => {
     if (!a1) die("액션 이름이 필요합니다");
     if (!flags.reason) die('--reason "근거" 가 필요합니다');
@@ -162,5 +194,5 @@ const out = await commands[cmd]();
 if (out !== undefined) {
   print(out);
   // 쓰기 결과는 종료 코드로도 알린다: 0 applied · 10 pending · 11 failed · 12 denied
-  if (cmd === "run") process.exit({ applied: 0, pending: 10, failed: 11, denied: 12 }[out.status] ?? 0);
+  if (cmd === "run" || cmd === "remember") process.exit({ applied: 0, pending: 10, failed: 11, denied: 12 }[out.status] ?? 0);
 }

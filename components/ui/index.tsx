@@ -13,6 +13,7 @@ export const OBJECT_ICON: Record<ObjectType, IconName> = {
   expense: "expense",
   note: "note",
   agent: "agent",
+  memory: "memory",
 };
 
 /** 페이지 머리 — 제목 줄 + 식별자 + 우측 액션. 하단 1px 경계. */

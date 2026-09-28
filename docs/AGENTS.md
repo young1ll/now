@@ -87,9 +87,30 @@ now events --follow --type signal.
 | `get_run` / `list_my_runs` / `cancel_run` | 승인 대기 결과 확인·철회 |
 | `traverse` / `find_path` | 그래프: 이웃(1~4단계) · 두 객체 사이 관계 경로 |
 | `list_events` | 이벤트 로그 (after_id 로 이어 읽기). 실시간은 SSE `/api/v1/events/stream` |
+| `get_context` | **컨텍스트 팩** — 고정 기억 → `about` 대상의 기억(확인됨 → 활성 → 제안 → 충돌) → `task` 로 회상한 기억·문서·객체, 토큰 예산(기본 2000) 안에서. `text` 는 `<memory-context>` 데이터 펜스, `hash` 는 재현용 |
+| `remember` | 기억 제안 (`memory.propose` 의 얇은 래퍼). `evidence` 1개 이상 · `reason` 필수. 결과 `status` 는 실행 상태, `memory_status` 는 기억 상태, `deduped` 면 기존 기억을 보강한 것, `conflicts` 는 충돌한 기억 |
+| `cite` | 팩 밖에서 찾아 쓴 기억의 사용 기록. 없는 id 는 `unknown` 으로 알려 준다 |
+| `list_memories` | 기억 목록 (상태·종류·대상). 뜻으로 찾을 때는 `recall(types: ["memory"])` — 대체·보관된 기억은 `include_inactive: true` 일 때만 |
 
 `run_action` 결과 `status`:
 - `applied` 적용 · `pending` 사람 승인 대기 (get_run 으로 확인) · `failed` 입력/규칙 오류 (error 확인 후 수정) · `denied` 정책 거부 (사람에게 요청)
+
+### 기억 — AI 가 제안하고 사람이 확정한다
+
+- 기억은 온톨로지 객체(`memory`)다. 에이전트는 `remember`(= `memory.propose`)로 **제안**만 한다 → `proposed`. 사람이 `/memory` 에서 확인하면 `verified`.
+- 문장 규칙 (액션이 검증한다): 대상을 이름으로 적은 **자기완결적 한 문장**("한빛상사는 …" — "그 고객"·"해당 건" 거부), **지시문 금지**("~하라", "ignore previous …" 거부), **비밀값 금지**.
+- 근거(`evidence`)는 필수. 근거 중 오염된(외부 출처) 기억이 있으면 오염을 물려받고, 에이전트는 되돌릴 수 없다. 메일·웹훅에서 알게 된 것은 `tainted: true`.
+- 같은 기억이 있으면 새로 만들지 않고 근거를 보강한다 (정규화 문장이 같거나 trigram Jaccard ≥ 0.85, 숫자가 같을 때). 같은 대상에 대해 숫자·날짜만 다른 기억은 **충돌**(`disputed` + 신호 `memory.disputed`) — 사람이 `memory.resolve` 로 정리한다. 에이전트의 제안은 사람이 확인한 기억의 상태를 바꾸지 못하고(충돌 링크·신호만 남는다), 사람이 확인한 적 있거나 고정된 기억을 에이전트가 정정·합치기·보관하면 고위험이다.
+- 틀린 기억은 `memory.correct` (새 기억으로 대체, 이전 기억은 계보에 `superseded`). 에이전트가 **확인된** 기억을 정정·보관·합치면 고위험(가드 모드에서 승인 대기).
+- 사람 전용: `memory.record` · `confirm` · `reject` · `pin` · `resolve` · `promote`.
+- AI 런타임 세션은 시작할 때 팩을 시스템 프롬프트(로컬 CLI 는 stdin 앞)에 받고, 세션에 팩 해시와 항목이 남는다. 답에 `[mem:N]` 으로 인용하면 세션이 끝날 때 사용 기록(`cited`)이 된다 — `/ai/sessions/<id>` 의 "이 세션이 본 기억·문서"·"인용한 기억".
+
+```bash
+now context --about CLT-0003 --task "갱신 제안서 작성" --text
+now remember "Acme Robotics 는 청구서에 PO 번호를 요구한다" --kind caution --about CLT-0003 --evidence note:3 --reason "협상 메모에 명시"
+now memories --status proposed,disputed --text
+now cite 12 15
+```
 
 ## 4. REST (같은 기능)
 
@@ -115,4 +136,6 @@ now events --follow --type signal.
 3. run_action 의 reason 에는 근거(어떤 메일·문자·일정에서 왔는지)를 한 문장으로 쓴다.
 4. 고객에게 나가는 행동과 금액 기록은 승인 대기가 정상이다. 결과는 get_run 으로 확인한다.
 5. 불확실하면 실행하지 말고 note.create 로 제안 메모를 남긴다.
+6. 시작할 때 get_context 로 기억 팩을 받고, 판단에 쓴 기억은 [mem:N] 으로 인용한다.
+7. 반복해서 쓸 사실·선호·교훈은 remember 로 제안한다 (근거 필수, 이름으로 쓴 한 문장, 지시문 금지).
 ```

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { runActionForm } from "@/app/actions/console";
 import { ActionDrawer, actHref } from "@/components/ActionDrawer";
 import { ActionForm } from "@/components/ActionForm";
@@ -7,6 +7,7 @@ import { ConfirmButton } from "@/components/ConfirmButton";
 import { Icon } from "@/components/icons";
 import { GraphCanvas } from "@/components/GraphCanvas";
 import { Markdown } from "@/components/Markdown";
+import { MemoryLink, MemoryStatusTag, memoryHref } from "@/components/memory";
 import { neighborhood } from "@/lib/ontology/graph";
 import { RunTable } from "@/components/runs";
 import { Empty, OBJECT_ICON, ObjectLink, PageHeader, Panel, PropertyList, Tag } from "@/components/ui";
@@ -23,6 +24,7 @@ import { type SearchParams, idParam, one } from "@/lib/params";
 import type { Interaction } from "@/lib/repos/clients";
 import type { getInvoice } from "@/lib/repos/finance";
 import type { Note } from "@/lib/repos/notes";
+import { REVIEW_STATUSES, memoriesAbout } from "@/lib/repos/memories";
 import { listRuns } from "@/lib/repos/runs";
 
 /** 이 객체에서 액션을 열 때 고정할 파라미터 */
@@ -45,6 +47,8 @@ export default async function ObjectPage({ params, searchParams }: { params: Pro
   const def = objectDef(p.type);
   const id = idParam(p.id);
   if (!def || !id) notFound();
+  // 기억은 열 기반 기억 화면에서 (계보·충돌·사용 세션을 함께 본다)
+  if (def.type === "memory") redirect(memoryHref(id));
   const obj = def.get(db(), id);
   if (!obj) notFound();
   const sp = await searchParams;
@@ -82,6 +86,7 @@ export default async function ObjectPage({ params, searchParams }: { params: Pro
       <div className="grid gap-px bg-void p-px xl:grid-cols-12">
         <div className="flex flex-col gap-px xl:col-span-8">
           <TypePanel type={def.type} obj={obj} path={path} />
+          <KnownPanel type={def.type} id={id} path={path} />
           <Panel title="변경 이력 · 감사" count={history.length} flush>
             {history.length === 0 ? <Empty icon="activity">이 객체에 대한 액션 기록이 없습니다.</Empty> : <RunTable runs={history} showObjects={false} />}
           </Panel>
@@ -131,6 +136,40 @@ export default async function ObjectPage({ params, searchParams }: { params: Pro
       </div>
       <ActionDrawer sp={sp} path={path} scope={scope} next={path} />
     </>
+  );
+}
+
+/** "AI 가 아는 것" — 이 객체에 관한 기억 (검토 대기 포함, 상태 표시) + 사람이 바로 기록 */
+function KnownPanel({ type, id, path }: { type: ObjectType; id: number; path: string }) {
+  const ms = memoriesAbout(db(), { type, id }, ["verified", "active", "proposed", "disputed"]);
+  const review = ms.filter((m) => (REVIEW_STATUSES as string[]).includes(m.status)).length;
+  return (
+    <Panel
+      title="AI 가 아는 것"
+      count={ms.length}
+      action={
+        <>
+          {review > 0 && <Link href="/memory?tab=review" className="btn-minimal btn-sm text-warning-fg">검토 대기 {review}</Link>}
+          <Link href={actHref(path, "memory.record", { about: `${type}:${id}` })} className="btn btn-sm"><Icon name="plus" size={10} /> 기억 추가</Link>
+        </>
+      }
+    >
+      {ms.length === 0 ? (
+        <p className="text-[12.5px] text-fg-3">이 객체에 관한 기억이 없습니다. 선호·예외·교훈처럼 구조로 담기 어려운 것을 기억으로 남기면 AI 세션이 참고합니다.</p>
+      ) : (
+        <ul className="flex flex-col divide-y divide-line-soft">
+          {ms.map((m) => (
+            <li key={m.id} className="flex min-w-0 items-start gap-2 py-1.5">
+              <span className="flex shrink-0 gap-1 pt-0.5"><MemoryStatusTag m={m} /></span>
+              <div className="min-w-0 flex-1">
+                <p className="text-[12.5px]">{m.statement}</p>
+                <div className="mt-0.5 text-[11px]"><MemoryLink id={m.id} /></div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Panel>
   );
 }
 

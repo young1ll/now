@@ -37,6 +37,16 @@ export function parseActionForm(def: AnyAction, fd: FormData): Record<string, un
       case "choice":
         out[key] = v === "" ? undefined : field.spec.optionsFrom === "ai_profiles" ? Number(v) : v;
         break;
+      case "refs": {
+        const parts = v.split(/[\s,]+/).filter(Boolean);
+        out[key] = parts.length ? parts : undefined;
+        break;
+      }
+      case "ids": {
+        const parts = v.split(/[\s,]+/).filter(Boolean).map((x) => Number(x.replace(/^[A-Za-z]{3}-0*/, "")));
+        out[key] = parts.length ? parts : undefined;
+        break;
+      }
       case "objref":
       case "enum":
       case "money":

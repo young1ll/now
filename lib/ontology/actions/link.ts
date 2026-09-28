@@ -1,10 +1,12 @@
 import type { DB } from "@/lib/db";
+import { getMemory, updateMemory } from "@/lib/repos/memories";
 import { defineAction } from "../action";
 import { f } from "../fields";
 import { deleteLinksFor, nodeInfo, objectExists, parseRef } from "../graph";
 import { displayId } from "../ids";
-import { customLinkTypes } from "../schema";
+import { ACTION_MANAGED_LINK_TYPES, SYSTEM_LINK_TYPES, customLinkTypes } from "../schema";
 import { ActionError, OBJECT_TYPES, type ObjectType, type Ref, refKey } from "../types";
+import { inheritsTaint } from "./memory";
 
 function ref(db: DB, s: string, what: string): Ref {
   const r = parseRef(s);
@@ -16,6 +18,8 @@ function ref(db: DB, s: string, what: string): Ref {
 const title = (db: DB, r: Ref) => nodeInfo(db, [r]).get(refKey(r))?.title ?? "";
 
 const TYPE_LABELS = Object.fromEntries(OBJECT_TYPES.map((t) => [t, t])) as Record<ObjectType, string>;
+const LINK_ENDS = [...OBJECT_TYPES, "*"] as const;
+const END_LABELS = { ...TYPE_LABELS, "*": "* (아무 객체)" } as Record<(typeof LINK_ENDS)[number], string>;
 
 export const linkActions = [
   defineAction({
@@ -34,9 +38,11 @@ export const linkActions = [
     run({ db }, i) {
       const lt = customLinkTypes(db).find((l) => l.name === i.link_type);
       if (!lt) throw new ActionError(`사용자 정의 링크 유형이 아닙니다: ${i.link_type} (외래키 링크는 해당 객체의 수정 액션으로 바꾼다)`);
+      if (ACTION_MANAGED_LINK_TYPES.includes(lt.name)) throw new ActionError(`${lt.name} 링크는 기억 상태와 함께 바뀌므로 memory.* 액션으로 만든다 (충돌: memory.propose contradicts · 승격: memory.promote)`);
       const from = ref(db, String(i.from), "출발");
       const to = ref(db, String(i.to), "도착");
-      if (from.type !== lt.fromType || to.type !== lt.toType) {
+      // 도착 유형 '*' = 아무 객체 (기억의 about · evidenced_by)
+      if (from.type !== lt.fromType || (lt.toType !== "*" && to.type !== lt.toType)) {
         throw new ActionError(`${lt.name} 는 ${lt.fromType} → ${lt.toType} 링크입니다 (받은 값: ${from.type} → ${to.type})`);
       }
       if (refKey(from) === refKey(to)) throw new ActionError("자기 자신과는 연결할 수 없습니다");
@@ -48,6 +54,11 @@ export const linkActions = [
         .prepare("INSERT OR IGNORE INTO links (link_type, from_type, from_id, to_type, to_id, note) VALUES (?, ?, ?, ?, ?, ?)")
         .run(lt.name, from.type, from.id, to.type, to.id, i.note ?? "");
       if (!r.changes) throw new ActionError("이미 같은 링크가 있습니다");
+      // 기억의 근거로 오염된 기억을 붙이면 오염도 따라간다 (memory.propose · merge 와 같은 규칙 — 사람이 확인한 기억은 제외)
+      if (lt.name === "evidenced_by" && from.type === "memory" && inheritsTaint(db, [to])) {
+        const m = getMemory(db, from.id);
+        if (m && !m.tainted && m.status !== "verified") updateMemory(db, from.id, { tainted: 1 });
+      }
       return {
         summary: `${displayId(from.type, from.id)} ${title(db, from)} —${lt.label}→ ${displayId(to.type, to.id)} ${title(db, to)}`,
         refs: [from, to],
@@ -84,7 +95,7 @@ export const linkActions = [
       label: f.text("라벨", { required: true, max: 40 }),
       inverse_label: f.text("역방향 라벨", { required: true, max: 40 }),
       from_type: f.enum("출발 유형", OBJECT_TYPES, TYPE_LABELS, { required: true }),
-      to_type: f.enum("도착 유형", OBJECT_TYPES, TYPE_LABELS, { required: true }),
+      to_type: f.enum("도착 유형", LINK_ENDS, END_LABELS, { required: true }),
       cardinality: f.enum("다중성", ["one", "many"] as const, { one: "하나", many: "여럿" }),
       description: f.textarea("설명"),
     },
@@ -107,6 +118,7 @@ export const linkActions = [
     humanOnly: true,
     fields: { name: f.choice("링크 유형", "link_types", { required: true }) },
     run({ db }, i) {
+      if ((SYSTEM_LINK_TYPES as readonly string[]).includes(String(i.name))) throw new ActionError(`'${i.name}' 는 시스템 링크 유형이라 삭제할 수 없습니다 (기억 계층이 사용)`);
       const n = (db.prepare("SELECT COUNT(*) AS n FROM links WHERE link_type = ?").get(i.name) as { n: number }).n;
       const r = db.prepare("DELETE FROM link_types WHERE name = ?").run(i.name);
       if (!r.changes) throw new ActionError("링크 유형을 찾을 수 없습니다");

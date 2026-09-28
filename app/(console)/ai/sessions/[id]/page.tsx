@@ -3,12 +3,17 @@ import { notFound } from "next/navigation";
 import { SESSION_STATUS } from "@/components/automation";
 import { AutoRefresh } from "@/components/client";
 import { Markdown } from "@/components/Markdown";
-import { Actor, PageHeader, Panel, PropertyList, Tag, fmtTime } from "@/components/ui";
+import { MemoryLink, MemoryStatusTag } from "@/components/memory";
+import { Actor, ObjectLink, PageHeader, Panel, PropertyList, Tag, fmtTime } from "@/components/ui";
 import { PROVIDER_INFO } from "@/lib/ai/providers";
 import { db } from "@/lib/db";
 import { idParam } from "@/lib/params";
 import { getProfile, getSession } from "@/lib/repos/ai";
 import { getAgent } from "@/lib/repos/agents";
+import { nodeInfo, parseRef } from "@/lib/ontology/graph";
+import { displayId } from "@/lib/ontology/ids";
+import { type Ref, refKey } from "@/lib/ontology/types";
+import { type MemoryRow, getMemory, listMemoryUses } from "@/lib/repos/memories";
 
 export default async function SessionPage({ params }: { params: Promise<{ id: string }> }) {
   const id = idParam((await params).id);
@@ -17,6 +22,12 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
   const p = getProfile(db(), s.profile_id);
   const agent = p ? getAgent(db(), p.agent_id) : undefined;
   const st = SESSION_STATUS[s.status];
+  // why-탐색기 1판: 세션이 받은 컨텍스트 팩(해시 + 항목)과 AI 가 인용한 기억
+  const seen = s.context_refs.map((k) => parseRef(k)).filter((r): r is Ref => !!r);
+  const info = nodeInfo(db(), seen);
+  const cited = [...new Set(listMemoryUses(db(), { sessionId: s.id, how: "cited", limit: 200 }).map((u) => u.memory_id))]
+    .map((mid) => getMemory(db(), mid))
+    .filter((m): m is MemoryRow => !!m);
   return (
     <>
       {(s.status === "queued" || s.status === "running") && <AutoRefresh seconds={3} />}
@@ -68,6 +79,48 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
               ]}
             />
             {agent && <Link href={`/activity?actor=agent:${agent.id}`} className="link mt-3 inline-block text-[12px]">이 에이전트의 액션 기록 →</Link>}
+          </Panel>
+          <Panel title="이 세션이 본 기억·문서" count={seen.length}>
+            <div className="mb-2 text-[11.5px] text-fg-3">
+              컨텍스트 팩 해시 <span className="mono text-fg-2">{s.context_hash ?? "— (팩 없음)"}</span>
+            </div>
+            {seen.length === 0 ? (
+              <p className="text-[12px] text-fg-3">세션 시작 때 넣은 기억·문서가 없습니다.</p>
+            ) : (
+              <ol className="flex flex-col gap-1">
+                {seen.map((r) => {
+                  const m = r.type === "memory" ? getMemory(db(), r.id) : undefined;
+                  return (
+                    <li key={refKey(r)} className="flex min-w-0 items-center gap-1.5 text-[12px]">
+                      {m ? (
+                        <>
+                          <MemoryStatusTag m={m} />
+                          <MemoryLink id={m.id} statement={m.statement} />
+                        </>
+                      ) : info.get(refKey(r)) ? (
+                        <ObjectLink type={r.type} id={r.id} title={info.get(refKey(r))!.title} />
+                      ) : (
+                        <span className="mono text-fg-4">{displayId(r.type, r.id)} (삭제됨)</span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
+          </Panel>
+          <Panel title="인용한 기억" count={cited.length}>
+            {cited.length === 0 ? (
+              <p className="text-[12px] text-fg-3">AI 가 [mem:N] 으로 인용하거나 cite 로 기록한 기억이 없습니다.</p>
+            ) : (
+              <ul className="flex flex-col gap-1">
+                {cited.map((m) => (
+                  <li key={m.id} className="flex min-w-0 items-center gap-1.5 text-[12px]">
+                    <Tag tone="ai">인용</Tag>
+                    <MemoryLink id={m.id} statement={m.statement} />
+                  </li>
+                ))}
+              </ul>
+            )}
           </Panel>
         </div>
       </div>

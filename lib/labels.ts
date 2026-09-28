@@ -34,6 +34,19 @@ export const INVOICE_STATUS = {
   void: { label: "취소", tone: "zinc" },
 } as const;
 
+export const MEMORY_STATUS = {
+  proposed: { label: "제안됨", tone: "amber" },
+  active: { label: "활성(미확인)", tone: "blue" },
+  verified: { label: "확인됨", tone: "green" },
+  disputed: { label: "충돌", tone: "red" },
+  superseded: { label: "대체됨", tone: "zinc" },
+  retired: { label: "보관", tone: "zinc" },
+} as const;
+
+export const MEMORY_KIND = { fact: "사실", preference: "선호", lesson: "교훈", procedure_hint: "절차 힌트", caution: "주의" } as const;
+
+export const MEMORY_ORIGIN = { human: "사람", agent: "에이전트", consolidation: "통합", import: "가져오기" } as const;
+
 export const CHECK_STATUS = {
   ok: { label: "정상", tone: "green" },
   degraded: { label: "주의", tone: "amber" },

@@ -22,3 +22,6 @@
 {"q": "계약 갱신 협상 중인 거래처", "expect": [{"type": "client", "title": "Acme Robotics"}], "kind": "semantic"}
 {"q": "신규 문의 들어온 가게", "expect": [{"type": "client", "title": "카페 온도"}], "kind": "semantic"}
 {"q": "세금 신고 체크리스트", "expect": [{"type": "note", "title": "부가세 신고 SOP"}], "kind": "semantic"}
+{"q": "세금계산서 발행 선호", "expect": [{"type": "memory", "title": "한빛상사는 세금계산서를 월말에"}], "kind": "memory"}
+{"q": "Acme SSO 요구 기억", "expect": [{"type": "memory", "title": "SSO(SAML) 지원을 요구"}], "kind": "memory"}
+{"q": "카페 온도 규모 기억", "expect": [{"type": "memory", "title": "카페 온도는 월 매출"}], "kind": "memory"}

@@ -12,13 +12,13 @@
  AI 에이전트 ── MCP / REST ──► 액션(Action) ──► 정책(Policy) ──► 실행 · 승인 대기 · 거부
                                 │                                   │
                           온톨로지(Ontology)                     감사(Audit)
-               사업 · 고객 · 업무 · 청구서 · 지출 · 문서 · 에이전트    모든 시도 기록
+          사업 · 고객 · 업무 · 청구서 · 지출 · 문서 · 에이전트 · 기억   모든 시도 기록
 ```
 
 | 계층 | 내용 |
 |---|---|
-| **온톨로지** | 사업·고객·업무·청구서·지출·문서·에이전트 객체와 연결. 콘솔·API·MCP 가 같은 정의를 읽는다 |
-| **액션** | 데이터를 바꾸는 유일한 경로 (41종). 하나의 정의가 폼 UI · AI 용 JSON Schema · 검증을 동시에 만든다 |
+| **온톨로지** | 사업·고객·업무·청구서·지출·문서·에이전트·기억 객체와 연결. 콘솔·API·MCP 가 같은 정의를 읽는다 |
+| **액션** | 데이터를 바꾸는 유일한 경로 (51종). 하나의 정의가 폼 UI · AI 용 JSON Schema · 검증을 동시에 만든다 |
 | **정책** | AI 운영 모드(자율/가드/감독/동결) × 위험도 → 즉시 실행 / 승인 대기 / 거부 |
 | **감사** | 사람·에이전트의 모든 실행(실패·거부 포함)을 근거·결정자·결과와 함께 기록 |
 | **신호** | 지연 업무, 미수금, 무응대 리드, 백업·인프라 문제 — 에이전트의 작업 큐이자 사람의 관망 화면 |
@@ -26,6 +26,7 @@
 | **AI 런타임** | Claude · OpenAI · Gemini · OpenRouter · Ollama/LM Studio · 로컬 CLI 에이전트가 같은 관문으로 일한다 |
 | **그래프** | 외래키·사용자 정의 링크·에이전트 변경 관계를 하나의 그래프로 탐색, Neo4j 분석 복제본 |
 | **검색** | 하이브리드 회상 `recall`: 어휘(FTS) + 의미(벡터, 로컬 Ollama 우선) + 관계(그래프). 벡터는 지워도 다시 만들어지는 캐시 |
+| **기억** | AI 가 제안하고 사람이 확인하는 사실·선호·교훈 (`memory` 객체). 중복은 보강, 숫자·날짜 충돌은 신호로, 정정은 대체(계보). AI 세션은 결정적 **컨텍스트 팩**(데이터 펜스)을 받고, 인용한 기억은 사용 기록에 남는다 |
 | **IaC** | OpenTofu 로 로컬 Docker 배포, `iac:audit` 로 현행 감사·드리프트 감시 |
 
 설계: [ARCHITECTURE](docs/ARCHITECTURE.md) · 온톨로지: [ONTOLOGY](docs/ONTOLOGY.md) · 이벤트·AI 런타임: [AUTOMATION](docs/AUTOMATION.md) · 기억·지식·검색: [MEMORY](docs/MEMORY.md) · 외부 AI 연결: [AGENTS](docs/AGENTS.md) · 인프라: [infra/README](infra/README.md) · 로드맵: [ROADMAP](docs/ROADMAP.md)
@@ -92,9 +93,10 @@ npm run iac:audit                    # 현행 감사 → 콘솔 /system (cron �
 | 에이전트 `/agents` | AI 운영 모드 · 등록/정지/폐기 · 연결 방법 |
 | 액션 카탈로그 `/actions` | 모든 액션과 현재 모드에서 AI 실행 결과 |
 | 검색 `/search` | 회상 검색 — 결과마다 근거(참조 · 내용 · 의미 · 관계 · 주변)와 의미 유사도 |
+| 기억 `/memory` | **열 기반**: 목록(검토 대기 · 확인됨 · 보관) │ 기억(근거 · 계보 · 충돌 · 확인/거절/정정) │ 관련(대상의 다른 기억 · 비슷한 기억 · 이 기억을 쓴 AI 세션). 객체 화면의 "AI 가 아는 것", 세션 화면의 "이 세션이 본 기억·문서" |
 | 시스템 `/system` | 런타임 · DB · 백업 · IaC 감사/드리프트 · 검색 색인 · 임베딩 공간(상태 · 채움 % · 오류) |
 
-단축키: `/` 검색 · `g o` 오퍼레이션 · `g i` 승인함 · `g a` 활동 · `g s` 일정
+단축키: `/` 검색 · `g o` 오퍼레이션 · `g i` 승인함 · `g a` 활동 · `g s` 일정 · `g m` 기억
 
 ## 명령
 
@@ -105,7 +107,7 @@ npm run iac:audit                    # 현행 감사 → 콘솔 /system (cron �
 | `npm run agent -- create/list/suspend/resume/revoke` | 에이전트 |
 | `npm run mcp` | MCP stdio 서버 (`NOW_AGENT_TOKEN` 필요) |
 | `npm run worker` | 이벤트 워커 단독 실행 (`-- --once`) |
-| `node bin/now.mjs …` | 에이전트용 CLI (`NOW_URL`, `NOW_AGENT_TOKEN`) |
+| `node bin/now.mjs …` | 에이전트용 CLI (`NOW_URL`, `NOW_AGENT_TOKEN`) — 기억: `now context` · `now remember` · `now memories` · `now cite` |
 | `npm run graph:neo4j` | Neo4j 로 그래프 동기화 / `-- --cypher 파일` |
 | `npm run eval:recall` | 검색 품질(recall@k · MRR)·지연 측정 / `-- --load 50000 --verbose` · `-- --embed-url <base_url> --embed-model <모델> [--embed-provider ollama]` (임베딩 공간을 채워 lexical · vector · hybrid 비교) · `-- --vec-bench 50000 --dim 1024` (KNN 지연·정확도) |
 | `npm run iac:build` · `iac:audit` | 인프라 |

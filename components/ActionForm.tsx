@@ -22,8 +22,12 @@ function refOptions(db: DB, type: ObjectType, scope: Scope) {
 
 function str(v: unknown): string {
   if (v === null || v === undefined) return "";
+  if (Array.isArray(v)) return v.map(String).join(", ");
   return String(v);
 }
+
+/** "client:3" → "CLT-0003" (표시용) */
+const showRef = (s: string) => s.replace(/^([a-z]+):(\d+)$/, (m, t, id) => (t in OBJECTS ? displayId(t as ObjectType, Number(id)) : m));
 
 function Input({ name, spec, value, db, scope, locked }: { name: string; spec: FieldSpec; value: unknown; db: DB; scope: Scope; locked: boolean }) {
   const common = { name, id: `f-${name}`, required: spec.required && spec.kind !== "boolean", disabled: false };
@@ -32,7 +36,15 @@ function Input({ name, spec, value, db, scope, locked }: { name: string; spec: F
       <>
         <input type="hidden" name={name} value={str(value)} />
         <div className="field flex items-center text-fg-2">
-          {spec.kind === "ref" && spec.ref && value ? <span className="mono">{displayId(spec.ref, Number(value))}</span> : spec.kind === "objref" && value ? <span className="mono">{str(value).replace(/^([a-z]+):(\d+)$/, (_, t, id) => displayId(t as ObjectType, Number(id)))}</span> : str(value) || "—"}
+          {spec.kind === "ref" && spec.ref && value ? (
+            <span className="mono">{displayId(spec.ref, Number(value))}</span>
+          ) : (spec.kind === "objref" || spec.kind === "refs") && value ? (
+            <span className="mono">{str(value).split(/[\s,]+/).filter(Boolean).map(showRef).join(", ")}</span>
+          ) : spec.kind === "ids" && spec.ref && value ? (
+            <span className="mono">{str(value).split(/[\s,]+/).filter(Boolean).map((x) => displayId(spec.ref!, Number(x))).join(", ")}</span>
+          ) : (
+            str(value) || "—"
+          )}
         </div>
       </>
     );
@@ -87,8 +99,11 @@ function Input({ name, spec, value, db, scope, locked }: { name: string; spec: F
         </select>
       );
     }
+    case "refs":
+    case "ids":
+      return <input {...common} className="field mono" defaultValue={str(value)} placeholder={spec.placeholder ?? (spec.kind === "ids" ? "12, MEM-0015" : undefined)} />;
     case "objref": {
-      const types = spec.refTypes ?? (["client", "task", "invoice", "note", "business", "expense", "agent"] as ObjectType[]);
+      const types = spec.refTypes ?? (["client", "task", "invoice", "note", "business", "expense", "agent", "memory"] as ObjectType[]);
       return (
         <select {...common} className="field" defaultValue={str(value)}>
           {!spec.required && <option value="">—</option>}
@@ -147,7 +162,7 @@ export function ActionForm({
   cancelHref?: string;
 }) {
   const risk = typeof def.risk === "function" ? "변동" : def.risk === "high" ? "고위험" : "저위험";
-  const wide = new Set(["textarea", "items"]);
+  const wide = new Set(["textarea", "items", "refs"]);
   return (
     <form action={runActionForm} className="flex flex-col gap-3">
       <input type="hidden" name="__action" value={def.name} />
@@ -163,7 +178,7 @@ export function ActionForm({
           <Field
             key={name}
             label={`${field.spec.label}${field.spec.required ? " *" : ""}`}
-            hint={field.spec.kind === "money" || field.spec.kind === "tags" ? field.spec.help : undefined}
+            hint={field.spec.kind === "money" || field.spec.kind === "tags" || field.spec.kind === "refs" ? (field.spec.kind === "refs" ? "쉼표로 구분 — client:3 또는 CLT-0003" : field.spec.help) : undefined}
             className={wide.has(field.spec.kind) || field.spec.kind === "ref" && !locked.includes(name) ? "col-span-2" : ""}
           >
             <Input name={name} spec={field.spec} value={values[name]} db={db} scope={def.target ? null : scope} locked={locked.includes(name)} />

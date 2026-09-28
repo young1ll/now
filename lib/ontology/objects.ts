@@ -2,18 +2,21 @@
 import type { DB } from "@/lib/db";
 import { daysBetween, formatDate, today } from "@/lib/dates";
 import {
-  CLIENT_KIND, CLIENT_STATUS, INVOICE_STATUS, PRIORITY, RECURRENCE, TASK_STATUS, type Tone,
+  CLIENT_KIND, CLIENT_STATUS, INVOICE_STATUS, MEMORY_KIND, MEMORY_ORIGIN, MEMORY_STATUS, PRIORITY, RECURRENCE, TASK_STATUS, type Tone,
 } from "@/lib/labels";
 import { formatMoney } from "@/lib/money";
 import { type AgentRow, getAgent, listAgents } from "@/lib/repos/agents";
 import { getBusiness, listBusinesses } from "@/lib/repos/businesses";
 import { getClient, listClients, listInteractions } from "@/lib/repos/clients";
 import { getInvoice, listExpenses, listInvoices } from "@/lib/repos/finance";
+import { type MemoryRow, creatorName, getMemory, listMemories, memoryLinks } from "@/lib/repos/memories";
 import { getNote, listNotes } from "@/lib/repos/notes";
 import type { Scope } from "@/lib/repos/scope";
 import { getTask, listTasks } from "@/lib/repos/tasks";
+import { memoryActionsFor } from "./actions/memory";
+import { nodeInfo } from "./graph";
 import { displayId } from "./ids";
-import type { ObjectType, Ref } from "./types";
+import { type ObjectType, type Ref, refKey } from "./types";
 
 export type Status = { label: string; tone: Tone };
 
@@ -428,7 +431,70 @@ const agent: ObjectTypeDef = {
   },
 };
 
-export const OBJECTS: Record<ObjectType, ObjectTypeDef> = { business, client, task, invoice, expense, note, agent };
+// ── memory ───────────────────────────────────────────────
+
+function memoryRecord(db: DB, m: MemoryRow): ObjectRecord {
+  return {
+    ref: ref("memory", m.id),
+    displayId: displayId("memory", m.id),
+    title: m.statement,
+    subtitle: [MEMORY_KIND[m.kind], creatorName(db, m.created_by), m.tainted ? "외부 출처" : "", m.pinned ? "고정" : ""].filter(Boolean).join(" · "),
+    businessId: m.business_id,
+    status: MEMORY_STATUS[m.status],
+    props: {
+      kind: MEMORY_KIND[m.kind],
+      business: m.business_name ?? "전역",
+      origin: `${MEMORY_ORIGIN[m.origin]} · ${creatorName(db, m.created_by)}`,
+      confidence: m.confidence.toFixed(2),
+      uses: String(m.use_count),
+      last_used: m.last_used_at ? formatDate(m.last_used_at) : "—",
+      valid: m.valid_from || m.valid_to ? `${m.valid_from ?? ""} ~ ${m.valid_to ?? ""}` : "—",
+      verified: m.verified_at ? `${formatDate(m.verified_at)} · ${m.verified_by ?? ""}` : "—",
+      tainted: m.tainted ? "예 — 외부 비신뢰 입력에서 유래" : "아니오",
+      pinned: m.pinned ? "예" : "아니오",
+      created: formatDate(m.created_at),
+    },
+  };
+}
+
+const memory: ObjectTypeDef = {
+  type: "memory",
+  label: "기억",
+  plural: "기억",
+  description:
+    "AI·사람이 함께 관리하는 원자적 믿음(사실·선호·교훈·절차 힌트·주의). 에이전트는 memory.propose(remember 도구)로 제안하고(proposed), 사람이 확인하면 verified. 정정은 memory.correct(새 기억으로 대체). about=대상, evidenced_by=근거, contradicts=충돌.",
+  createAction: "memory.propose",
+  actions: ["memory.confirm", "memory.reject", "memory.pin", "memory.correct", "memory.resolve", "memory.merge", "memory.retire", "memory.promote"],
+  actionsFor: (raw) => memoryActionsFor(String(raw.status), !!raw.pinned),
+  columns: [
+    { key: "kind", label: "종류" },
+    { key: "origin", label: "출처" },
+    { key: "uses", label: "사용", num: true },
+    { key: "business", label: "사업" },
+  ],
+  list: (db, scope, q) => listMemories(db, scope, { q }).map((m) => memoryRecord(db, m)),
+  get(db, id) {
+    const m = getMemory(db, id);
+    if (!m) return undefined;
+    const l = memoryLinks(db, id);
+    const refs: Ref[] = [...l.about, ...l.evidence, ...l.contradicts.map((x) => ({ type: "memory" as const, id: x })), ...(l.promotedTo ? [l.promotedTo] : [])];
+    const info = nodeInfo(db, refs);
+    const lk = (r: Ref, relation: string) => link(r.type, r.id, info.get(refKey(r))?.title ?? "(삭제됨)", relation);
+    return detail(
+      memoryRecord(db, m),
+      { kind: "종류", business: "사업", origin: "출처", confidence: "신뢰도", uses: "사용 수", last_used: "최근 사용", valid: "유효기간", verified: "확인", tainted: "외부 출처(미검증)", pinned: "고정", created: "생성" },
+      [
+        ...l.about.map((r) => lk(r, "대상")),
+        ...l.evidence.map((r) => lk(r, "근거")),
+        ...l.contradicts.map((x) => lk({ type: "memory", id: x }, "충돌")),
+        ...(l.promotedTo ? [lk(l.promotedTo, "승격됨")] : []),
+      ],
+      { ...m, about: l.about.map(refKey), evidence: l.evidence.map(refKey), contradicts: l.contradicts, promoted_to: l.promotedTo ? refKey(l.promotedTo) : null },
+    );
+  },
+};
+
+export const OBJECTS: Record<ObjectType, ObjectTypeDef> = { business, client, task, invoice, expense, note, agent, memory };
 
 export function objectDef(type: string): ObjectTypeDef | undefined {
   return Object.hasOwn(OBJECTS, type) ? OBJECTS[type as ObjectType] : undefined;
@@ -440,6 +506,6 @@ export function getObject(db: DB, r: Ref): ObjectDetail | undefined {
 
 /** 여러 유형을 가로지르는 검색. */
 export function searchObjects(db: DB, scope: Scope, q: string, limitPerType = 8): ObjectRecord[] {
-  const types: ObjectType[] = ["client", "task", "invoice", "note", "expense", "business"];
+  const types: ObjectType[] = ["client", "task", "invoice", "note", "expense", "business", "memory"];
   return types.flatMap((t) => OBJECTS[t].list(db, scope, q).slice(0, limitPerType));
 }

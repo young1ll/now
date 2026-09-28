@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { ActionDrawer, actHref } from "@/components/ActionDrawer";
 import { Column, Columns } from "@/components/Columns";
 import { Icon } from "@/components/icons";
@@ -18,6 +18,8 @@ export default async function ExplorerPage({ params, searchParams }: { params: P
   const def = objectDef(type);
   if (!def) notFound();
   const sp = await searchParams;
+  // 기억은 전용 열 기반 화면 (검토 대기 · 확인됨 · 보관 탭)
+  if (def.type === "memory") redirect(`/memory${one(sp.sel) ? `?tab=all&sel=${one(sp.sel)}` : ""}`);
   const scope = await currentScope();
   const q = one(sp.q)?.trim() || undefined;
   const status = one(sp.status) || undefined;

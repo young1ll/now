@@ -4,7 +4,7 @@ import type { DB } from "@/lib/db";
 import type { ObjectType } from "@/lib/ontology/types";
 import { type RecallMode, type RecallOpts, recall } from "./recall";
 
-export type GoldenCase = { q: string; expect: { type: ObjectType; title: string }[]; kind: "lexical" | "relation" | "ref" | "semantic" };
+export type GoldenCase = { q: string; expect: { type: ObjectType; title: string }[]; kind: "lexical" | "relation" | "ref" | "semantic" | "memory" };
 
 export type CaseResult = GoldenCase & { rank: number | null; ms: number; top: string[] };
 

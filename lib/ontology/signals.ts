@@ -4,6 +4,7 @@ import { addDays, daysBetween, today } from "@/lib/dates";
 import { formatMoney } from "@/lib/money";
 import { listClients } from "@/lib/repos/clients";
 import { listInvoices } from "@/lib/repos/finance";
+import { LIVE_STATUSES, getMemory, listMemories, memoryLinks, reviewCounts } from "@/lib/repos/memories";
 import type { Scope } from "@/lib/repos/scope";
 import { latestSnapshot } from "@/lib/repos/snapshots";
 import { listTasks } from "@/lib/repos/tasks";
@@ -139,6 +140,45 @@ export function computeSignals(db: DB, scope: Scope, on = today()): Signal[] {
         suggested: [follow],
       });
     }
+  }
+
+  // 기억: 충돌은 기억마다 (해결 제안 포함), 검토 대기는 사업마다 하나
+  // 한도 없이 전부 — 목록 한도(500)로 잘리면 빠진 충돌의 신호가 거짓으로 resolved 된다
+  for (const m of listMemories(db, scope, { status: ["disputed"], limit: -1 })) {
+    const other = memoryLinks(db, m.id).contradicts.map((x) => getMemory(db, x)).find((o) => o && LIVE_STATUSES.includes(o.status));
+    out.push({
+      key: `memory.disputed:${m.id}`,
+      kind: "memory.disputed",
+      severity: "warning",
+      title: `기억 충돌 · ${m.statement}`,
+      detail: other ? `상대: ${displayId("memory", other.id)} ${other.statement}` : "충돌 상대가 정리됨 — 확인 또는 정정",
+      ref: { type: "memory", id: m.id },
+      displayId: displayId("memory", m.id),
+      businessId: m.business_id,
+      since: m.updated_at.slice(0, 10),
+      suggested: [
+        ...(other
+          ? [
+              { action: "memory.resolve", label: "이 기억 유지", params: { id: m.id, other_id: other.id, keep: "this" } },
+              { action: "memory.resolve", label: "상대 기억 유지", params: { id: m.id, other_id: other.id, keep: "other" } },
+            ]
+          : []),
+        { action: "memory.confirm", label: "확인", params: { id: m.id } },
+      ],
+    });
+  }
+  for (const { business_id: bid, business_name: name, n, since } of reviewCounts(db, scope)) {
+    const r = { n, name, since };
+    out.push({
+      key: `memory.review:${bid ?? "global"}`,
+      kind: "memory.review",
+      severity: "info",
+      title: `AI 가 제안한 기억 ${r.n}건 검토 대기`,
+      detail: `${r.name ?? "전역"} · /memory 에서 확인·거절`,
+      businessId: bid,
+      since: r.since,
+      suggested: [],
+    });
   }
 
   // 시스템 신호는 전체 범위에서만

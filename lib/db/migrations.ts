@@ -419,4 +419,59 @@ export const migrations: string[] = [
     activated_at   TEXT
   );
   `,
+  // 6: 기억 (docs/MEMORY.md M3) — AI·사람이 함께 관리하는 원자적 믿음. 쓰기는 memory.* 액션, 사용 기록만 텔레메트리
+  `
+  CREATE TABLE memories (
+    id               INTEGER PRIMARY KEY,
+    business_id      INTEGER REFERENCES businesses(id) ON DELETE CASCADE,   -- NULL = 전역(운영자 개인·공용)
+    kind             TEXT NOT NULL CHECK (kind IN ('fact','preference','lesson','procedure_hint','caution')),
+    statement        TEXT NOT NULL,
+    status           TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed','active','verified','disputed','superseded','retired')),
+    confidence       REAL NOT NULL DEFAULT 0.5 CHECK (confidence >= 0 AND confidence <= 1),
+    origin           TEXT NOT NULL CHECK (origin IN ('human','agent','consolidation','import')),
+    tainted          INTEGER NOT NULL DEFAULT 0,
+    pinned           INTEGER NOT NULL DEFAULT 0,
+    valid_from       TEXT,
+    valid_to         TEXT,
+    supersedes_id    INTEGER REFERENCES memories(id) ON DELETE SET NULL,
+    superseded_by_id INTEGER REFERENCES memories(id) ON DELETE SET NULL,
+    created_by       TEXT NOT NULL,          -- 'human:operator' · 'agent:3' · 'system:system'
+    verified_by      TEXT,
+    verified_at      TEXT,
+    retired_reason   TEXT,
+    use_count        INTEGER NOT NULL DEFAULT 0,
+    last_used_at     TEXT,
+    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+  CREATE INDEX memories_status ON memories(status, business_id);
+
+  -- 사용 기록 (텔레메트리 — 액션이 아니다: agents.last_seen_at 과 같은 취급)
+  CREATE TABLE memory_uses (
+    id         INTEGER PRIMARY KEY,
+    memory_id  INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    session_id INTEGER,                      -- agent_sessions.id (있으면)
+    actor      TEXT NOT NULL,
+    how        TEXT NOT NULL CHECK (how IN ('context','cited')),
+    used_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+  CREATE INDEX memory_uses_memory ON memory_uses(memory_id, used_at);
+
+  ALTER TABLE agent_sessions ADD COLUMN context_hash TEXT;
+  ALTER TABLE agent_sessions ADD COLUMN context_refs TEXT NOT NULL DEFAULT '[]';
+
+  -- 이전 버전의 link_type.define 은 이 네 이름도 받았다. 운영자가 이미 정의해 둔 같은 이름의 유형은
+  -- '<이름>_user' 로 옮긴다 (유형 복사 → 링크 이동 → 옛 유형 삭제: links.link_type 외래키에 ON UPDATE 가 없어서).
+  INSERT INTO link_types (name, label, inverse_label, from_type, to_type, cardinality, description, created_at)
+    SELECT name || '_user', label, inverse_label, from_type, to_type, cardinality, description, created_at FROM link_types
+    WHERE name IN ('about','evidenced_by','contradicts','promoted_to');
+  UPDATE links SET link_type = link_type || '_user' WHERE link_type IN ('about','evidenced_by','contradicts','promoted_to');
+  DELETE FROM link_types WHERE name IN ('about','evidenced_by','contradicts','promoted_to');
+
+  INSERT INTO link_types (name, label, inverse_label, from_type, to_type, cardinality, description) VALUES
+    ('about', '대상', '관련 기억', 'memory', '*', 'many', '이 기억이 무엇에 관한 것인가'),
+    ('evidenced_by', '근거', '근거로 쓰인 기억', 'memory', '*', 'many', '이 기억을 뒷받침하는 객체'),
+    ('contradicts', '충돌', '충돌', 'memory', 'memory', 'many', '서로 모순되는 기억'),
+    ('promoted_to', '승격됨', '승격 원본 기억', 'memory', '*', 'one', '이 기억이 구조화되어 옮겨간 객체');
+  `,
 ];

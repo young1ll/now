@@ -13,6 +13,8 @@ export type ShellData = {
   pending: number;
   agentsActive: number;
   signals: { critical: number; warning: number };
+  /** 검토 대기 기억 (제안 · 활성 · 충돌) */
+  memoryReview: number;
   operator: string;
   status: { schema: number; schemaLatest: number; backupAge: string; iac: string; version: string };
 };
@@ -45,6 +47,7 @@ export function Shell({ data, children }: { data: ShellData; children: ReactNode
         { href: "/o/invoice", label: "청구서", icon: "invoice" },
         { href: "/o/expense", label: "지출", icon: "expense" },
         { href: "/o/note", label: "지식 · 문서", icon: "note" },
+        { href: "/memory", label: "기억", icon: "memory", badge: data.memoryReview || undefined, badgeTone: "warning" },
         { href: "/o/business", label: "사업", icon: "business" },
         { href: "/graph", label: "그래프", icon: "graph" },
         { href: "/ontology", label: "스키마", icon: "schema" },

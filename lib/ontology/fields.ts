@@ -17,6 +17,8 @@ export type FieldKind =
   | "tags"
   | "items"
   | "objref"
+  | "refs"
+  | "ids"
   | "choice";
 
 export type FieldSpec = {
@@ -35,6 +37,8 @@ export type FieldSpec = {
 };
 
 export type Field<T = unknown> = { schema: z.ZodType<T>; spec: FieldSpec };
+
+const REF_RE = /^([a-z]+:\d+|[A-Za-z]{3}-\d+)$/;
 
 type Opts = { required?: boolean; help?: string; placeholder?: string };
 
@@ -110,12 +114,36 @@ export const f = {
   },
   /** 임의 객체 참조: "client:3" 또는 "CLT-0003" */
   objref(label: string, o: Opts & { types?: ObjectType[] } = {}) {
-    return make(z.string().trim().regex(/^([a-z]+:\d+|[A-Za-z]{3}-\d+)$/, "객체 참조 형식: client:3 또는 CLT-0003"), {
+    return make(z.string().trim().regex(REF_RE, "객체 참조 형식: client:3 또는 CLT-0003"), {
       kind: "objref",
       label,
       required: !!o.required,
       refTypes: o.types,
       help: o.help ?? "객체 참조 — \"client:3\" 또는 \"CLT-0003\"",
+    });
+  },
+  /**
+   * 객체 참조 여러 개: JSON 에서는 참조 문자열 배열 ["client:3", "CLT-0004"], 폼에서는 쉼표로 구분한 텍스트.
+   * 존재 여부는 액션 run 에서 검사한다.
+   */
+  refs(label: string, o: Opts & { max?: number } = {}) {
+    const one = z.string().trim().regex(REF_RE, "객체 참조 형식: client:3 또는 CLT-0003");
+    return make(z.array(one).max(o.max ?? 10, `${label}은(는) 최대 ${o.max ?? 10}개`), {
+      kind: "refs",
+      label,
+      required: !!o.required,
+      help: o.help ?? `객체 참조 목록 (최대 ${o.max ?? 10}개) — ["client:3", "CLT-0004"]`,
+      placeholder: o.placeholder ?? "client:3, CLT-0004",
+    });
+  },
+  /** 같은 유형 객체 id 여러 개 (예: 충돌하는 기억 id). 폼에서는 "12, MEM-0015" 처럼 쉼표 구분 */
+  ids(label: string, ref: ObjectType, o: Opts & { max?: number } = {}) {
+    return make(z.array(z.number().int().positive()).max(o.max ?? 10), {
+      kind: "ids",
+      label,
+      ref,
+      required: !!o.required,
+      help: o.help ?? `${ref} 객체 id 목록`,
     });
   },
   /** DB 에서 옵션을 읽는 선택 (링크 유형 등). 검증은 액션 run 에서. */

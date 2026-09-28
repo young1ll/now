@@ -8,6 +8,7 @@ import { computeSignals } from "@/lib/ontology/signals";
 import { OPERATOR } from "@/lib/ontology/types";
 import { listAgents } from "@/lib/repos/agents";
 import { listBusinesses } from "@/lib/repos/businesses";
+import { memoryStats } from "@/lib/repos/memories";
 import { pendingCount } from "@/lib/repos/runs";
 import { getAiMode } from "@/lib/repos/settings";
 import { latestSnapshot } from "@/lib/repos/snapshots";
@@ -33,6 +34,7 @@ export default async function ConsoleLayout({ children }: { children: ReactNode 
           critical: signals.filter((s) => s.severity === "critical").length,
           warning: signals.filter((s) => s.severity === "warning").length,
         },
+        memoryReview: memoryStats(d, scope).review,
         operator: OPERATOR.name,
         status: {
           version: APP_VERSION,

@@ -29,6 +29,10 @@ AI 가 운영하고 사람이 관망·개입하는 1인 사업 운영 체제. Ne
 - 그래프 질의는 `lib/ontology/graph.ts`. 노드 색은 `lib/ontology/palette.ts` (dataviz 검증값 — 임의 변경 금지).
 - 서버 컴포넌트에서 `"use client"` 모듈의 상수를 import 하지 않는다 (클라이언트 참조가 된다).
 
+## 기억 (memory)
+- 기억 쓰기는 `lib/ontology/actions/memory.ts` 액션만. 예외는 사용 기록 `recordMemoryUse`(텔레메트리) 하나. 에이전트 제안은 `proposed` 로 착지(`landingStatus`), 사람이 확인해야 `verified`.
+- 컨텍스트 팩(`lib/knowledge/context.ts`)은 결정적이어야 한다 (같은 상태 → 같은 해시). 기억 문장은 데이터 펜스 안에만 — 지시문·비밀값은 `validateStatement` 가 거부.
+
 ## 데이터
 - 스키마 변경은 `lib/db/migrations.ts` 배열 **끝에 추가**. 기존 항목 수정 금지.
 - 금액: 통화 최소 단위 정수 (`lib/money.ts`). 다른 통화는 합산하지 않는다. 날짜 `YYYY-MM-DD`.

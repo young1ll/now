@@ -91,6 +91,16 @@ export function seedDemo(d: DB, o: { embeddingSpace?: boolean } = {}): string {
     H("link.create", { from: "note:1", link_type: "documents", to: "task:2" });
     A("link.create", { from: `invoice:${draft}`, link_type: "cites", to: "note:3" }, "견적 근거 문서 연결");
 
+    // ── 기억: 사람이 말한 것은 확인됨, 에이전트가 추론한 것은 제안됨 (숫자가 다른 두 제안은 충돌) ──
+    const pref = id(H("memory.record", { statement: "한빛상사는 세금계산서를 월말에 일괄 발행받기를 원한다", kind: "preference", about: [`client:${hanbit}`], evidence: [`invoice:${hanbitNow}`] }), "memory");
+    H("memory.pin", { id: pref, pinned: true });
+    H("memory.record", { statement: "김민수는 이메일보다 전화 연락을 선호한다", kind: "preference", about: [`client:${kim}`] });
+    const sso = id(A("memory.propose", { statement: "Acme Robotics 는 갱신 조건으로 SSO(SAML) 지원을 요구한다", kind: "fact", about: [`client:${acme}`], evidence: ["note:3", `client:${acme}`], confidence: 0.8 }, "갱신 협상 메일과 협상 메모에 반복해서 나온 요구"), "memory");
+    A("memory.propose", { statement: "카페 온도는 월 매출 약 3천만원, 직원 2명 규모로 기장 견적을 문의했다", kind: "fact", about: [`client:${cafe}`], evidence: [`client:${cafe}`] }, "문의 메일 요약 — 견적 산정에 쓰임");
+    A("memory.propose", { statement: "Acme Robotics 는 연 선결제 시 10% 할인 제안이 가능하다", kind: "fact", about: [`client:${acme}`], evidence: ["note:3"] }, "협상 메모의 할인 조건");
+    A("memory.propose", { statement: "Acme Robotics 는 연 선결제 시 15% 할인 제안이 가능하다", kind: "fact", about: [`client:${acme}`], evidence: [`client:${acme}`] }, "통화 중 언급된 할인 폭");
+    H("memory.confirm", { id: sso });
+
     // ── AI 런타임 · 트리거 ────────────────────────────
     const ops = H("ai_profile.create", {
       name: "운영 Claude",

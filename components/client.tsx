@@ -38,7 +38,7 @@ export function AutoSubmitSelect(props: React.SelectHTMLAttributes<HTMLSelectEle
   return <select {...props} onChange={(e) => e.currentTarget.form?.requestSubmit()} />;
 }
 
-/** 전역 단축키: / 검색, g+o 오퍼레이션, g+i 승인함, g+a 활동 */
+/** 전역 단축키: / 검색, g+o 오퍼레이션, g+i 승인함, g+a 활동, g+m 기억 */
 export function Hotkeys() {
   const router = useRouter();
   useEffect(() => {
@@ -57,7 +57,7 @@ export function Hotkeys() {
         return;
       }
       if (g) {
-        const to = { o: "/", i: "/inbox", a: "/activity", s: "/schedule", c: "/o/client", t: "/o/task" }[e.key];
+        const to = { o: "/", i: "/inbox", a: "/activity", s: "/schedule", c: "/o/client", t: "/o/task", m: "/memory" }[e.key];
         if (to) router.push(to);
         g = false;
       }

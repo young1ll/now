@@ -19,9 +19,13 @@ export type ExecuteRequest = {
 };
 
 /** 대상 객체의 현재 상태 지문. 승인 대기 중 대상이 바뀌면 승인 시 거부하기 위해 쓴다. */
+/** 사용 기록(텔레메트리)은 지문에서 뺀다 — 기억이 컨텍스트에 쓰였다고 승인 대기 요청이 "대상 변경"으로 거부되면 안 된다 */
+const TELEMETRY_KEYS = new Set(["use_count", "last_used_at"]);
+
 export function fingerprint(db: DB, ref: Ref | undefined): string | null {
   if (!ref) return null;
-  const raw = getObject(db, ref)?.raw ?? null;
+  const obj = getObject(db, ref)?.raw ?? null;
+  const raw = obj && Object.fromEntries(Object.entries(obj).filter(([k]) => !TELEMETRY_KEYS.has(k)));
   return crypto.createHash("sha256").update(JSON.stringify(raw)).digest("hex").slice(0, 16);
 }
 

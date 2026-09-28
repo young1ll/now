@@ -1,7 +1,7 @@
 // 온톨로지 그래프: 객체 = 노드, 링크(외래키 · 감사 파생 · 사용자 정의) = 간선.
 // 저장소는 SQLite 그대로 두고, 그래프 질의(이웃·경로·전체)는 이 계층에서 계산한다.
 import type { DB } from "@/lib/db";
-import { CLIENT_STATUS, INVOICE_STATUS, TASK_STATUS, type Tone } from "@/lib/labels";
+import { CLIENT_STATUS, INVOICE_STATUS, MEMORY_STATUS, TASK_STATUS, type Tone } from "@/lib/labels";
 import type { Scope } from "@/lib/repos/scope";
 import { displayId } from "./ids";
 import { DERIVED_LINKS, INTRINSIC_LINKS, customLinkTypes } from "./schema";
@@ -40,6 +40,7 @@ const NODE_SQL: Record<ObjectType, string> = {
   expense: "SELECT id, description AS title, NULL AS status, business_id FROM expenses",
   note: "SELECT id, title, NULL AS status, business_id FROM notes",
   agent: "SELECT id, name AS title, status, NULL AS business_id FROM agents",
+  memory: "SELECT id, statement AS title, status, business_id FROM memories",
 };
 
 function statusOf(type: ObjectType, s: string | null): GraphNode["status"] {
@@ -49,6 +50,7 @@ function statusOf(type: ObjectType, s: string | null): GraphNode["status"] {
   if (type === "invoice") return INVOICE_STATUS[s as keyof typeof INVOICE_STATUS];
   if (type === "agent") return { active: { label: "활성", tone: "green" as Tone }, suspended: { label: "정지", tone: "amber" as Tone }, revoked: { label: "폐기", tone: "zinc" as Tone } }[s];
   if (type === "business") return s === "archived" ? { label: "보관", tone: "zinc" } : undefined;
+  if (type === "memory") return MEMORY_STATUS[s as keyof typeof MEMORY_STATUS];
   return undefined;
 }
 
@@ -250,7 +252,7 @@ export function parseRef(s: string): Ref | undefined {
   if (m1 && (OBJECT_TYPES as readonly string[]).includes(m1[1])) return { type: m1[1] as ObjectType, id: Number(m1[2]) };
   const m2 = t.toUpperCase().match(/^([A-Z]{3})-0*(\d+)$/);
   if (m2) {
-    const PREF: Record<string, ObjectType> = { BIZ: "business", CLT: "client", TSK: "task", INV: "invoice", EXP: "expense", DOC: "note", AGT: "agent" };
+    const PREF: Record<string, ObjectType> = { BIZ: "business", CLT: "client", TSK: "task", INV: "invoice", EXP: "expense", DOC: "note", AGT: "agent", MEM: "memory" };
     const type = PREF[m2[1]];
     if (type) return { type, id: Number(m2[2]) };
   }

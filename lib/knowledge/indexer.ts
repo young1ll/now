@@ -101,12 +101,15 @@ export function reindexAll(db: DB, now = new Date()): IndexResult {
   return res;
 }
 
-/** 카드에 이 객체의 이름이 들어가는 객체들 (외래키로 이 객체를 가리키는 쪽) */
+/** 카드에 이 객체의 이름이 들어가는 객체들 (외래키로 이 객체를 가리키는 쪽 + 이 객체를 대상·근거로 둔 기억) */
 function dependents(db: DB, r: Ref): Ref[] {
   const out: Ref[] = [];
   for (const l of INTRINSIC_LINKS) {
     if (l.toType !== r.type) continue;
     for (const row of db.prepare(`SELECT id FROM ${l.table} WHERE ${l.fk} = ?`).all(r.id) as { id: number }[]) out.push({ type: l.fromType, id: row.id });
+  }
+  for (const row of db.prepare("SELECT DISTINCT from_id AS id FROM links WHERE from_type = 'memory' AND link_type IN ('about','evidenced_by') AND to_type = ? AND to_id = ?").all(r.type, r.id) as { id: number }[]) {
+    out.push({ type: "memory", id: row.id });
   }
   return out;
 }
@@ -137,17 +140,34 @@ function pending(db: DB, now: Date, periodicSweep: boolean): IndexResult & { mod
   if (head <= cursor) return { rendered: 0, changed: 0, removed: 0, mode: "none" };
   const rows = db.prepare("SELECT payload FROM events WHERE id > ? AND id <= ? AND type = 'action.applied'").all(cursor, head) as { payload: string }[];
   const touched = new Map<string, Ref>();
+  // 이름이 바뀌었을 수 있어 카드에 그 이름을 담은 객체까지 따라가야 하는 ref.
+  // memory.* 액션은 기억만 바꾼다 — refs 의 대상(about)은 감사·그래프용이고 대상 카드는 기억 링크를 담지 않으며,
+  // 기억 문장은 바뀌지 않으므로(정정은 새 행) 다른 기억의 "근거: …" 줄도 그대로다. 확장하면 대상의 기억 N개를 매번 다시 렌더한다.
+  const expand = new Map<string, Ref>();
   for (const row of rows) {
-    const refs = (JSON.parse(row.payload) as { refs?: unknown[] }).refs ?? [];
-    for (const r of refs) if (isRef(r)) touched.set(`${r.type}:${r.id}`, r);
+    const p = JSON.parse(row.payload) as { action?: string; refs?: unknown[] };
+    const memoryAction = p.action?.startsWith("memory.") ?? false;
+    for (const r of p.refs ?? []) {
+      if (!isRef(r)) continue;
+      const key = `${r.type}:${r.id}`;
+      if (memoryAction && r.type !== "memory") continue;
+      touched.set(key, r);
+      if (!memoryAction) expand.set(key, r);
+    }
   }
-  if (touched.size > MAX_INCREMENTAL) {
+  const all = new Map(touched);
+  if (touched.size <= MAX_INCREMENTAL) {
+    for (const r of expand.values()) {
+      for (const d of dependents(db, r)) all.set(`${d.type}:${d.id}`, d);
+      if (all.size > MAX_INCREMENTAL) break;
+    }
+  }
+  // 한도는 확장 뒤의 수로 — 허브 객체에 딸린 것이 많으면 증분보다 스윕이 낫다
+  if (all.size > MAX_INCREMENTAL) {
     const r = reindexAll(db, now);
     setSetting(db, "index_cursor", String(head));
     return { ...r, mode: "sweep" };
   }
-  const all = new Map(touched);
-  for (const r of touched.values()) for (const d of dependents(db, r)) all.set(`${d.type}:${d.id}`, d);
   const r = reindexRefs(db, [...all.values()]);
   setSetting(db, "index_cursor", String(head));
   return { ...r, mode: "incremental" };
