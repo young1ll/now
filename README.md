@@ -27,7 +27,7 @@
 | **그래프** | 외래키·사용자 정의 링크·에이전트 변경 관계를 하나의 그래프로 탐색, Neo4j 분석 복제본 |
 | **IaC** | OpenTofu 로 로컬 Docker 배포, `iac:audit` 로 현행 감사·드리프트 감시 |
 
-설계: [ARCHITECTURE](docs/ARCHITECTURE.md) · 온톨로지: [ONTOLOGY](docs/ONTOLOGY.md) · 이벤트·AI 런타임: [AUTOMATION](docs/AUTOMATION.md) · 외부 AI 연결: [AGENTS](docs/AGENTS.md) · 인프라: [infra/README](infra/README.md) · 로드맵: [ROADMAP](docs/ROADMAP.md)
+설계: [ARCHITECTURE](docs/ARCHITECTURE.md) · 온톨로지: [ONTOLOGY](docs/ONTOLOGY.md) · 이벤트·AI 런타임: [AUTOMATION](docs/AUTOMATION.md) · 기억·지식·검색: [MEMORY](docs/MEMORY.md) · 외부 AI 연결: [AGENTS](docs/AGENTS.md) · 인프라: [infra/README](infra/README.md) · 로드맵: [ROADMAP](docs/ROADMAP.md)
 
 ---
 
