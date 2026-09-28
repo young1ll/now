@@ -18,6 +18,7 @@
     "iac:build": "docker build -t now:local .",
     "worker": "tsx scripts/worker.ts",
     "graph:neo4j": "tsx scripts/neo4j-sync.ts",
+    "eval:recall": "tsx scripts/eval-recall.ts",
     "now": "node bin/now.mjs"
   },
   "dependencies": {

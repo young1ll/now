@@ -17,7 +17,7 @@
 - [x] 열 기반 UI (목록 │ 선택 │ 연결, 너비 조정·기억)
 
 ## 다음 (v0.4) — 기억 · 지식 · 검색 ([설계](MEMORY.md))
-- [ ] M1 검색 기반: 문서·청크·객체 카드, 하이브리드 `recall` (FTS + 그래프), 골든셋 `eval:recall`
+- [x] M1 검색 기반: 청크·객체 카드, 하이브리드 `recall` (FTS + 그래프), 골든셋 `eval:recall`, `/search` · MCP `recall` · `now recall`
 - [ ] M2 벡터: sqlite-vec (bit→float 재정렬), 로컬 우선 임베딩(Ollama), 임베딩 공간 교체
 - [ ] M3 기억: `memory` 객체 · 상태 기계 · 액션 8종 · 충돌/오염 방지 · `/memory` · MCP `remember`·`get_context`
 - [ ] M4 큐레이터: 에피소드 요약 · 기억 추출/병합/만료 · 승격 제안 · 플레이북

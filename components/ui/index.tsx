@@ -230,12 +230,12 @@ export function Callout({ tone = "blue", title, children }: { tone?: "blue" | "a
 
 export function Tabs({ items, current }: { items: { key: string; label: ReactNode; href: string }[]; current: string }) {
   return (
-    <nav className="no-print flex border-b border-line bg-panel px-3">
+    <nav className="no-print flex overflow-x-auto border-b border-line bg-panel px-3">
       {items.map((t) => (
         <Link
           key={t.key}
           href={t.href}
-          className={`-mb-px flex h-9 items-center gap-1.5 border-b-2 px-3 text-[12.5px] ${
+          className={`-mb-px flex h-9 shrink-0 items-center gap-1.5 border-b-2 px-3 text-[12.5px] whitespace-nowrap ${
             t.key === current ? "border-primary-hi text-fg" : "border-transparent text-fg-3 hover:text-fg"
           }`}
         >

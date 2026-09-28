@@ -361,4 +361,41 @@ export const migrations: string[] = [
     ('documents', '문서화 대상', '관련 문서', 'note', 'task', 'many', '이 문서가 절차·결과를 설명하는 업무'),
     ('cites', '근거 문서', '인용됨', 'invoice', 'note', 'many', '청구 근거가 되는 문서(계약·견적)');
   `,
+  // 4: 검색 색인 (docs/MEMORY.md M1) — 원본에서 언제든 재생성 가능한 파생 데이터
+  `
+  -- 검색 단위. 객체 카드(seq 0)와 문서 본문 구획(seq 1..)
+  CREATE TABLE chunks (
+    id           INTEGER PRIMARY KEY,
+    owner_type   TEXT NOT NULL,
+    owner_id     INTEGER NOT NULL,
+    business_id  INTEGER,
+    seq          INTEGER NOT NULL DEFAULT 0,
+    head         TEXT NOT NULL DEFAULT '',        -- 제목 줄 (카드 머리 · 문서 제목 경로). 검색 가중치 5배
+    text         TEXT NOT NULL,
+    tokens       INTEGER NOT NULL,
+    content_hash TEXT NOT NULL,
+    indexed_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE (owner_type, owner_id, seq)
+  );
+  CREATE INDEX chunks_business ON chunks(business_id);
+  CREATE INDEX chunks_hash ON chunks(content_hash);
+
+  CREATE VIRTUAL TABLE chunks_fts USING fts5(head, text, content='chunks', content_rowid='id', tokenize='trigram');
+  -- 2글자 검색어(고객·계약 …)는 trigram 으로 못 찾는다. 큰 색인에서는 어절 접두 일치(고객* → 고객에게)로 찾는다.
+  CREATE VIRTUAL TABLE chunks_words USING fts5(head, text, content='chunks', content_rowid='id', tokenize='unicode61 remove_diacritics 2');
+  CREATE TRIGGER chunks_ai AFTER INSERT ON chunks BEGIN
+    INSERT INTO chunks_fts(rowid, head, text) VALUES (new.id, new.head, new.text);
+    INSERT INTO chunks_words(rowid, head, text) VALUES (new.id, new.head, new.text);
+  END;
+  CREATE TRIGGER chunks_ad AFTER DELETE ON chunks BEGIN
+    INSERT INTO chunks_fts(chunks_fts, rowid, head, text) VALUES ('delete', old.id, old.head, old.text);
+    INSERT INTO chunks_words(chunks_words, rowid, head, text) VALUES ('delete', old.id, old.head, old.text);
+  END;
+  CREATE TRIGGER chunks_au AFTER UPDATE OF head, text ON chunks BEGIN
+    INSERT INTO chunks_fts(chunks_fts, rowid, head, text) VALUES ('delete', old.id, old.head, old.text);
+    INSERT INTO chunks_fts(rowid, head, text) VALUES (new.id, new.head, new.text);
+    INSERT INTO chunks_words(chunks_words, rowid, head, text) VALUES ('delete', old.id, old.head, old.text);
+    INSERT INTO chunks_words(rowid, head, text) VALUES (new.id, new.head, new.text);
+  END;
+  `,
 ];

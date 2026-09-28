@@ -8,6 +8,7 @@ import { displayId, runId } from "@/lib/ontology/ids";
 import { OBJECTS, objectDef, searchObjects } from "@/lib/ontology/objects";
 import { type Graph, neighborhood, objectExists, parseRef, shortestPath } from "@/lib/ontology/graph";
 import { PROPERTIES, allLinkTypes } from "@/lib/ontology/schema";
+import { recall } from "@/lib/knowledge/recall";
 import { listEvents } from "@/lib/repos/events";
 import { opsOverview } from "@/lib/ontology/ops";
 import { computeSignals } from "@/lib/ontology/signals";
@@ -128,6 +129,37 @@ export const TOOLS: Tool[] = [
         business_id: r.businessId,
         props: r.props,
       }));
+    },
+  ),
+  def(
+    "recall",
+    "자연어 회상 검색: 이름·내용·접촉 이력·문서 본문(어휘)과 관계(그래프)를 함께 본다. 무엇을 찾아야 할지 흐릿할 때(\"SSO 요구한 고객\", \"부가세 마감 절차\", \"카페 온도를 소개한 사람\") 먼저 쓰고, 결과의 ref 로 get_object 를 호출하라. why: lexical=내용 일치 · graph=상위 결과와 연결 · ref=직접 참조 · about=기준 객체 주변.",
+    {
+      query: z.string().min(1).describe("자연어 질의 또는 핵심어. 객체 참조(CLT-0003)도 가능"),
+      about: z.string().optional().describe('이 객체 주변을 우선 — "client:3" 또는 "CLT-0003"'),
+      types: z.array(z.enum(OBJECT_TYPES)).optional().describe("이 유형만"),
+      business_id: scopeArg,
+      k: z.number().int().min(1).max(50).optional().describe("최대 결과 수 (기본 10)"),
+    },
+    (db, _a, { query, about, types, business_id, k }) => {
+      const aboutRef = about ? parseRef(about) : undefined;
+      if (about && (!aboutRef || !objectExists(db, aboutRef))) throw new ToolError(`객체를 찾을 수 없습니다: ${about}`);
+      const r = recall(db, { query, about: aboutRef, types, scope: business_id ?? null, k: k ?? 10 });
+      return {
+        terms: r.terms,
+        took_ms: r.tookMs,
+        hits: r.hits.map((h) => ({
+          ref: h.key,
+          display_id: h.displayId,
+          type: h.ref.type,
+          title: h.title,
+          status: h.status?.label ?? null,
+          why: h.why,
+          matched: h.matched,
+          snippet: h.snippet,
+          via: h.via ? `${h.via.from} —${h.via.label}` : undefined,
+        })),
+      };
     },
   ),
   def(

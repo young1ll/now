@@ -9,6 +9,7 @@ const HELP = `now — Now 사업 운영 체제 CLI (에이전트용)
   now overview [--business N]            운영 현황 (먼저 호출)
   now signals [--severity critical]      주의가 필요한 상태 = 할 일 큐 (제안 액션 포함)
   now ontology                           객체 유형 · 속성 · 링크 유형 · 액션
+  now recall <자연어 질의> [--about ref] [--k 10]   내용·관계를 함께 보는 회상 검색 (찾을 때 먼저)
   now search <type> [검색어]             type: client task invoice expense note business agent
   now get <ref>                          객체 상세 (ref: client:3 또는 CLT-0003)
   now traverse <ref> [--depth 2]         그래프 이웃
@@ -117,6 +118,11 @@ const commands = {
   overview: () => call("get_overview", { business_id: num(flags.business) }),
   signals: async () => call("list_signals", { business_id: num(flags.business), severity: flags.severity }),
   ontology: () => call("describe_ontology"),
+  recall: () => {
+    const query = pos.slice(1).join(" ");
+    if (!query) die("질의가 필요합니다");
+    return call("recall", { query, about: flags.about, k: num(flags.k), business_id: num(flags.business) });
+  },
   search: () => call("search_objects", { type: a1, query: a2, business_id: num(flags.business), limit: num(flags.limit) }),
   get: () => {
     const m = String(a1 ?? "").match(/^([a-z]+):(\d+)$/);

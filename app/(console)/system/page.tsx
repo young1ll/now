@@ -3,6 +3,7 @@ import { AutoRefresh } from "@/components/client";
 import { Icon } from "@/components/icons";
 import { Callout, Empty, Metric, PageHeader, Panel, PropertyList, Tag, fmtTime, timeAgo } from "@/components/ui";
 import { db } from "@/lib/db";
+import { indexStats } from "@/lib/knowledge/indexer";
 import { latestSnapshot, listSnapshots } from "@/lib/repos/snapshots";
 import { runtimeInfo } from "@/lib/system";
 
@@ -19,6 +20,7 @@ export default function SystemPage() {
   const snap = latestSnapshot(db());
   const history = listSnapshots(db(), 20);
   const lastBackup = rt.backups[0];
+  const idx = indexStats(db());
 
   return (
     <>
@@ -118,6 +120,17 @@ export default function SystemPage() {
               ]}
             />
           </Panel>
+          <Panel title="검색 색인" action={<a href="/search" className="btn-minimal btn-sm">검색</a>}>
+            <PropertyList
+              items={[
+                { label: "객체 · 구획", value: `${idx.owners} · ${idx.chunks}`, mono: true },
+                { label: "토큰 (추정)", value: idx.tokens.toLocaleString(), mono: true },
+                { label: "반영 대기 이벤트", value: String(idx.lag), mono: true },
+                { label: "전체 스윕", value: idx.sweptAt ? timeAgo(idx.sweptAt) : "아직 없음" },
+                { label: "벡터 (의미 검색)", value: "없음 — 어휘 + 관계 (M2 예정)" },
+              ]}
+            />
+          </Panel>
           <Panel
             title="백업"
             count={rt.backups.length}
@@ -144,6 +157,7 @@ export default function SystemPage() {
 cd infra && tofu apply    # 배포/변경 (코드로만)
 npm run iac:audit         # 현행 감사 → 이 화면
 npm run db:backup         # 온라인 백업 (= 지금 백업)
+npm run eval:recall       # 검색 품질·지연 측정
 curl localhost:3000/api/health`}</pre>
           </Panel>
         </div>

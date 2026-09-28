@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import type { DB } from "@/lib/db";
 import { executeSession } from "@/lib/ai/runtime";
 import { today } from "@/lib/dates";
+import { indexPending } from "@/lib/knowledge/indexer";
 import { computeSignals } from "@/lib/ontology/signals";
 import { createSession, getProfile, getSession } from "@/lib/repos/ai";
 import { type NowEvent, emitEvent, getEvent, lastEventId, listEvents, matchesPattern } from "@/lib/repos/events";
@@ -281,9 +282,9 @@ export async function executeQueued(db: DB, opts: WorkerOpts & { background?: bo
 }
 
 /** 한 번의 틱: 매칭은 매번, 신호·스케줄은 분 단위 */
-export async function tick(db: DB, opts: WorkerOpts & { signals?: boolean; schedules?: boolean; background?: boolean } = {}) {
+export async function tick(db: DB, opts: WorkerOpts & { signals?: boolean; schedules?: boolean; background?: boolean; index?: boolean } = {}) {
   const now = opts.now ?? new Date();
-  const out = { signals: { raised: 0, resolved: 0 }, scheduled: 0, queued: 0, executed: 0 };
+  const out = { signals: { raised: 0, resolved: 0 }, scheduled: 0, queued: 0, executed: 0, indexed: 0 };
   // 커서를 먼저 확정해야 이번 틱에 새로 생긴 신호가 트리거에 전달된다
   out.queued = matchEvents(db, now);
   if (opts.signals !== false) out.signals = detectSignals(db, now);
@@ -292,6 +293,14 @@ export async function tick(db: DB, opts: WorkerOpts & { signals?: boolean; sched
   out.queued += matchEvents(db, now);
   out.executed = await executeQueued(db, opts);
   // 매칭 직후 생긴 실행분도 바로 처리 (세션 결과로 생긴 이벤트는 다음 틱)
+  if (opts.index !== false) {
+    // 검색 색인은 파생 데이터 — 실패해도 트리거 처리를 막지 않고 다음 틱에 다시 시도한다
+    try {
+      out.indexed = indexPending(db, now).changed;
+    } catch (e) {
+      console.error("[now-worker] 색인 실패", e);
+    }
+  }
   return out;
 }
 

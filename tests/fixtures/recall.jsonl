@@ -1,0 +1,24 @@
+{"q": "부가세 마감 언제", "expect": [{"type": "note", "title": "부가세 신고 SOP"}], "kind": "lexical"}
+{"q": "홈택스 전자신고 절차", "expect": [{"type": "note", "title": "부가세 신고 SOP"}], "kind": "lexical"}
+{"q": "법인카드 누락", "expect": [{"type": "task", "title": "법인카드 누락분"}], "kind": "lexical"}
+{"q": "원천세", "expect": [{"type": "task", "title": "원천세 신고"}], "kind": "lexical"}
+{"q": "양도세 고객", "expect": [{"type": "client", "title": "김민수"}], "kind": "lexical"}
+{"q": "SSO 요구하는 고객", "expect": [{"type": "client", "title": "Acme Robotics"}], "kind": "lexical"}
+{"q": "60석 확장", "expect": [{"type": "note", "title": "Acme 갱신 협상 메모"}, {"type": "task", "title": "Acme 갱신 제안서"}], "kind": "lexical"}
+{"q": "선결제 할인", "expect": [{"type": "note", "title": "Acme 갱신 협상 메모"}], "kind": "lexical"}
+{"q": "기장 견적 문의", "expect": [{"type": "client", "title": "카페 온도"}], "kind": "lexical"}
+{"q": "사무실 월세", "expect": [{"type": "expense", "title": "사무실 월세"}], "kind": "lexical"}
+{"q": "세무 프로그램 구독료", "expect": [{"type": "expense", "title": "세무 프로그램 구독"}], "kind": "lexical"}
+{"q": "Stripe 입금", "expect": [{"type": "invoice", "title": "Acme"}], "kind": "lexical"}
+{"q": "hello@ondo.example", "expect": [{"type": "client", "title": "카페 온도"}], "kind": "lexical"}
+{"q": "CLT-0002", "expect": [{"type": "client", "title": "김민수"}], "kind": "ref"}
+{"q": "누가 카페 온도를 소개했나", "expect": [{"type": "client", "title": "한빛상사"}], "kind": "relation"}
+{"q": "부가세 확정신고 준비 선행 업무", "expect": [{"type": "task", "title": "법인카드 누락분"}], "kind": "relation"}
+{"q": "김민수 청구서", "expect": [{"type": "invoice", "title": "김민수"}], "kind": "relation"}
+{"q": "Acme 담당 업무", "expect": [{"type": "task", "title": "Acme 갱신 제안서"}], "kind": "relation"}
+{"q": "에이전트가 지켜야 할 규칙", "expect": [{"type": "note", "title": "에이전트 운영 원칙"}], "kind": "lexical"}
+{"q": "고객에게 보내기 전에 승인이 필요한가", "expect": [{"type": "note", "title": "에이전트 운영 원칙"}], "kind": "semantic"}
+{"q": "클라우드 서버 비용", "expect": [{"type": "expense", "title": "AWS"}], "kind": "semantic"}
+{"q": "계약 갱신 협상 중인 거래처", "expect": [{"type": "client", "title": "Acme Robotics"}], "kind": "semantic"}
+{"q": "신규 문의 들어온 가게", "expect": [{"type": "client", "title": "카페 온도"}], "kind": "semantic"}
+{"q": "세금 신고 체크리스트", "expect": [{"type": "note", "title": "부가세 신고 SOP"}], "kind": "semantic"}

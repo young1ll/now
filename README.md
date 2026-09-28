@@ -89,6 +89,7 @@ npm run iac:audit                    # 현행 감사 → 콘솔 /system (cron �
 | `npm run worker` | 이벤트 워커 단독 실행 (`-- --once`) |
 | `node bin/now.mjs …` | 에이전트용 CLI (`NOW_URL`, `NOW_AGENT_TOKEN`) |
 | `npm run graph:neo4j` | Neo4j 로 그래프 동기화 / `-- --cypher 파일` |
+| `npm run eval:recall` | 검색 품질(recall@k · MRR)·지연 측정 / `-- --load 50000 --verbose` |
 | `npm run iac:build` · `iac:audit` | 인프라 |
 
 ## 보안 모델 (로컬 단일 운영자)
