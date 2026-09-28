@@ -398,4 +398,25 @@ export const migrations: string[] = [
     INSERT INTO chunks_words(rowid, head, text) VALUES (new.id, new.head, new.text);
   END;
   `,
+  // 5: 임베딩 공간 (docs/MEMORY.md M2) — 벡터 자체는 본 DB 밖 파생 파일(now-vec.db)에 둔다
+  `
+  CREATE TABLE embedding_spaces (
+    id             INTEGER PRIMARY KEY,
+    name           TEXT NOT NULL,
+    provider       TEXT NOT NULL CHECK (provider IN ('ollama','openai','gemini','voyage','openai_compatible')),
+    model          TEXT NOT NULL,
+    dim            INTEGER NOT NULL DEFAULT 0,          -- 0 = 첫 응답에서 확정
+    base_url       TEXT NOT NULL DEFAULT '',
+    api_key_env    TEXT NOT NULL DEFAULT '',            -- 환경변수 "이름"만
+    query_prefix   TEXT NOT NULL DEFAULT '',            -- e5 계열: "query: "
+    passage_prefix TEXT NOT NULL DEFAULT '',            -- e5 계열: "passage: "
+    local_only     INTEGER NOT NULL DEFAULT 1,          -- 1 = 본문이 이 기기/사설망을 떠나지 않음
+    auto_activate  INTEGER NOT NULL DEFAULT 0,          -- 다 채워지면 자동 활성화 (활성 공간이 없을 때만)
+    status         TEXT NOT NULL DEFAULT 'building' CHECK (status IN ('building','active','retired')),
+    last_error     TEXT,
+    last_error_at  TEXT,
+    created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    activated_at   TEXT
+  );
+  `,
 ];

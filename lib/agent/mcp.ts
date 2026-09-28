@@ -14,7 +14,7 @@ export type JsonRpcResponse = { jsonrpc: "2.0"; id: Id; result?: unknown; error?
 export const INSTRUCTIONS = `Now — 1인 사업가용 사업 운영 체제.
 당신은 이 사업의 운영 에이전트다. 사람(운영자)은 콘솔에서 관망하고 필요할 때 개입한다.
 - 시작: get_overview → list_signals 로 할 일을 파악한다.
-- 찾기: recall (자연어 — 내용·관계를 함께 본다) 또는 search_objects (유형별 목록). 읽기: get_object. 쓰기: run_action (반드시 reason 에 근거를 적는다).
+- 찾기: recall (자연어 — 내용·의미·관계를 함께 본다) 또는 search_objects (유형별 목록). 읽기: get_object. 쓰기: run_action (반드시 reason 에 근거를 적는다).
 - 고위험 액션(발행·삭제·금액 기록)은 AI 운영 모드에 따라 승인 대기(pending)가 된다. 대기 결과는 get_run 으로 확인.
 - 확실하지 않으면 실행하지 말고 note.create 로 제안 메모를 남기거나 사람에게 물어라.`;
 
@@ -26,7 +26,7 @@ function fail(id: Id, code: number, message: string): JsonRpcResponse {
 }
 
 /** 메시지 하나 처리. 알림(id 없음)이면 null. */
-export function handleMcp(db: DB, actor: Actor, msg: JsonRpcRequest): JsonRpcResponse | null {
+export async function handleMcp(db: DB, actor: Actor, msg: JsonRpcRequest): Promise<JsonRpcResponse | null> {
   if (!msg || msg.jsonrpc !== "2.0" || typeof msg.method !== "string") return fail(msg?.id ?? null, -32600, "Invalid Request");
   // id 없는 메시지는 알림 — 어떤 것도 실행하지 않고 응답하지 않는다
   if (msg.id === undefined) return null;
@@ -51,7 +51,7 @@ export function handleMcp(db: DB, actor: Actor, msg: JsonRpcRequest): JsonRpcRes
     case "tools/call": {
       const name = String(msg.params?.name ?? "");
       try {
-        const data = callTool(db, actor, name, msg.params?.arguments);
+        const data = await callTool(db, actor, name, msg.params?.arguments);
         const structured = data !== null && typeof data === "object" && !Array.isArray(data) ? (data as Record<string, unknown>) : { items: data };
         return ok(id, { content: [{ type: "text", text: JSON.stringify(data, null, 2) }], structuredContent: structured, isError: false });
       } catch (e) {

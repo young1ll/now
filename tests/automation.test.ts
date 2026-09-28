@@ -124,7 +124,7 @@ describe("트리거 · 웹훅", () => {
     assert.equal(runSchedules(db, new Date(2026, 8, 29, 8, 0)), 1);
   });
 
-  it("트리거 입력 검증 — 비밀값 거부·cron 오류", () => {
+  it("트리거 입력 검증 — 비밀값 거부·cron 오류", async () => {
     const { run, human } = setup();
     assert.throws(() => run(human, "trigger.create", { name: "x", kind: "schedule", schedule: "bad", target: "webhook", webhook_url: "https://x" }));
     assert.throws(() => run(human, "trigger.create", { name: "x", kind: "event", event_pattern: "*", target: "webhook", webhook_url: "https://x", secret_env: "sk-live-abc" }));
@@ -165,7 +165,7 @@ describe("AI 런타임 (공급자 목업)", () => {
     assert.equal(msgs[2].content.length, 2);
     assert.equal(msgs[2].content[0].type, "tool_result");
     // 감사: 에이전트 신원으로 기록, 삭제(고위험)는 대상 없음 → failed
-    const runs = callTool(db, { type: "agent", id: String(p.agent_id), name: "" }, "list_my_runs", {}) as { action: string; status: string }[];
+    const runs = await callTool(db, { type: "agent", id: String(p.agent_id), name: "" }, "list_my_runs", {}) as { action: string; status: string }[];
     assert.deepEqual(runs.map((r) => `${r.action}:${r.status}`).sort(), ["task.create:applied", "task.delete:failed"]);
   });
 
@@ -261,7 +261,7 @@ describe("AI 런타임 (공급자 목업)", () => {
 });
 
 describe("온톨로지 그래프", () => {
-  it("사용자 정의 링크 · 이웃 탐색 · 최단 경로 · 삭제 시 정리", () => {
+  it("사용자 정의 링크 · 이웃 탐색 · 최단 경로 · 삭제 시 정리", async () => {
     const { db, a, run, human } = setup();
     const c1 = run(human, "client.create", { business_id: a, name: "소개자" }).refs[0].id;
     const c2 = run(human, "client.create", { business_id: a, name: "신규" }).refs[0].id;
@@ -288,15 +288,15 @@ describe("온톨로지 그래프", () => {
     assert.deepEqual(parseRef("DOC-0012"), { type: "note", id: 12 });
   });
 
-  it("링크 유형 정의는 에이전트에게 고위험(승인), 그래프 도구 동작", () => {
+  it("링크 유형 정의는 에이전트에게 고위험(승인), 그래프 도구 동작", async () => {
     const { db, a, agent, run } = setup();
     assert.equal(run(agent, "link_type.define", { name: "partner_of", label: "파트너", inverse_label: "파트너", from_type: "client", to_type: "client" }).status, "pending");
     const c = run(agent, "client.create", { business_id: a, name: "A" }).refs[0].id;
-    const res = callTool(db, agent, "traverse", { ref: `client:${c}`, depth: 1 }) as { nodes: { ref: string }[] };
+    const res = await callTool(db, agent, "traverse", { ref: `client:${c}`, depth: 1 }) as { nodes: { ref: string }[] };
     assert.ok(res.nodes.some((n) => n.ref === `business:${a}`));
-    const onto = callTool(db, agent, "describe_ontology", {}) as { link_types: { name: string }[] };
+    const onto = await callTool(db, agent, "describe_ontology", {}) as { link_types: { name: string }[] };
     assert.ok(onto.link_types.some((l) => l.name === "referred_by") && onto.link_types.some((l) => l.name === "task.client"));
-    const tools = (handleMcp(db, agent, { jsonrpc: "2.0", id: 1, method: "tools/list" })!.result as { tools: { name: string }[] }).tools.map((t) => t.name);
+    const tools = ((await handleMcp(db, agent, { jsonrpc: "2.0", id: 1, method: "tools/list" }))!.result as { tools: { name: string }[] }).tools.map((t) => t.name);
     for (const n of ["traverse", "find_path", "list_events"]) assert.ok(tools.includes(n));
   });
 });
@@ -400,7 +400,7 @@ describe("리뷰 반영 (v0.3)", () => {
     assert.equal((db.prepare("SELECT status FROM trigger_runs WHERE id = ?").get(r.lastInsertRowid) as { status: string }).status, "failed");
 
     assert.ok(cronMatches("0 9 * * 7", new Date(2026, 8, 27, 9, 0))); // 일요일
-    assert.throws(() => callTool(db, agent, "constructor", {}), /알 수 없는 도구/);
+    await assert.rejects(() => callTool(db, agent, "constructor", {}), /알 수 없는 도구/);
     const lk = run(agent, "link.delete", { link_id: 1 });
     assert.equal(lk.status, "pending");
   });

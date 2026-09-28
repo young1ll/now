@@ -1,6 +1,6 @@
 # 기억 · 지식 · 검색 설계 (v0.4 방향)
 
-> 상태: **설계 확정안 / 미구현**. 구현하면서 바뀌는 부분은 이 문서를 먼저 고친다.
+> 상태: **M1 · M2 구현됨** (§11 · §12), M3 이후 설계안. 구현하면서 바뀌는 부분은 이 문서를 먼저 고친다.
 > 전제: [ONTOLOGY.md](ONTOLOGY.md) 의 의미(semantic) · 행동(kinetic) 계층, [AGENTS.md](AGENTS.md) 의 단일 관문(`executeAction`).
 
 ## 0. 한 문장
@@ -239,18 +239,21 @@ score = RRF(fts, vec, graph)
 
 ### 7.3 임베딩 제공자
 
-기존 `ai_profiles` 와 같은 방식으로 `embedding_spaces` 가 제공자를 참조한다.
+`embedding_spaces` 행 하나 = (제공자, 모델, 차원, 주소, 접두사). 제공자는 전부 **HTTP 어댑터**(`lib/knowledge/embed.ts`)다.
 
-| 제공자 | 기본 모델 (예시) | 비고 |
-|---|---|---|
-| Ollama (로컬) | `bge-m3` (1024, 다국어·한국어 양호) | **기본값.** 본문이 기기를 떠나지 않음 |
-| OpenAI | `text-embedding-3-small` (차원 축소 512 가능) | 외부 전송 → `local_only=0` 명시 필요 |
-| Gemini | `gemini-embedding` 계열 | 〃 |
-| Voyage | `voyage-3` 계열 | Anthropic 권장 임베딩 (Anthropic 자체 임베딩 API 는 없음) |
-| 없음 | — | **FTS + 그래프만으로 동작** (성능 저하, 기능 유지) |
+| 제공자 | 기본 모델 (예시) | 전송 | 비고 |
+|---|---|---|---|
+| Ollama (로컬) | `bge-m3` (1024, 다국어·한국어 양호) | 로컬 | **기본값.** `POST /api/embed`. 연결 실패 시 "`ollama pull bge-m3` 후 실행" 안내 |
+| OpenAI 호환 | LM Studio · vLLM · llama.cpp · TEI · Infinity 의 아무 모델 | 주소가 localhost·사설망·`.local`·`host.docker.internal` 이면 로컬, 아니면 외부 | `POST {base}/embeddings`, 키는 있으면 |
+| OpenAI | `text-embedding-3-small` | 외부 | 키 필수 (`OPENAI_API_KEY`) |
+| Gemini | `gemini-embedding-001` | 외부 | `batchEmbedContents`, 키는 `x-goog-api-key` 헤더 (URL 에 넣지 않음), taskType 질의/문서 구분 |
+| Voyage | `voyage-3.5` 계열 | 외부 | Anthropic 권장 임베딩 (Anthropic 자체 임베딩 API 는 없음). input_type 질의/문서 구분 |
+| 없음 | — | — | **FTS + 그래프만으로 동작** (의미 질의 품질만 떨어짐) |
 
-- 외부 임베딩 = 사업 데이터가 밖으로 나감. 공간 생성/전환 액션(`embedding.space_create`, `embedding.activate`)은 `local_only=0` 이면 **high · humanOnly**.
-- **모델 교체**: 새 공간 `building` → 큐가 뒤에서 채움 (진행률 표시) → 100% 가 되면 `embedding.activate` 로 원자적 전환 → 이전 공간 `retired` 후 파일에서 삭제. 교체 중에도 검색은 이전 공간으로 계속된다.
+- **in-process 모델(transformers.js·ONNX)은 넣지 않았다.** 이 개발 환경에서는 Hugging Face 가 막혀 있어 모델을 받아 검증할 수 없고, 검증 못 한 경로를 기본값으로 둘 수 없다. 로컬 실행은 Ollama/OpenAI 호환 서버로 한다 (HTTP 로만).
+- e5 계열처럼 질의/문서 접두사가 필요한 모델은 공간의 `query_prefix`·`passage_prefix` 로 (폼 입력은 앞뒤 공백이 잘리므로 콜론으로 끝나면 공백 한 칸을 붙인다).
+- 외부 임베딩 = 사업 데이터가 밖으로 나감. `embedding.space_create` · `embedding.activate` 는 공간이 로컬이 아니면(`local_only=0`) **high**, 세 액션 모두 `humanOnly`.
+- **모델 교체**: 새 공간 `building` → 워커가 뒤에서 채움 (시스템 화면에 % 표시) → 100% 가 되면 `embedding.activate` 로 전환 (`force` 로 강제 가능) → 이전 공간 `retired` → 시간당 정리(`gcVectors`)에서 knn 테이블 DROP · 벡터 삭제. 교체 중에도 검색은 이전 공간으로 계속된다.
 
 ### 7.4 품질 측정
 
@@ -274,7 +277,7 @@ score = RRF(fts, vec, graph)
 | 단계 | 내용 | 완료 기준 |
 |---|---|---|
 | **M1 검색 기반** ✅ | `chunks`·`chunks_fts`·`chunks_words`, 객체 카드, 색인 워커, `recall`(FTS+그래프), `/search` 교체, 골든셋·`eval:recall` (`documents` 는 M4 로) | 임베딩 없이 recall@5 기준선 측정, 기존 테스트 전부 통과 — §11 |
-| **M2 벡터** | `embedding_spaces`·`embed_queue`·`now-vec.db`, Ollama/OpenAI/Gemini 임베더, bit→float 재정렬, 공간 교체 | 5만 청크 합성 데이터 p95 < 20ms (KNN), 하이브리드 recall@5 > FTS 단독 |
+| **M2 벡터** ✅ | `embedding_spaces`·`now-vec.db` (`embed_queue` 대신 해시 LEFT JOIN — §12), Ollama/OpenAI 호환/OpenAI/Gemini/Voyage 임베더, bit→float 재정렬, 공간 교체 | 5만 청크 합성 데이터 p95 < 20ms (KNN), 하이브리드 recall@5 > FTS 단독 |
 | **M3 기억** | `memories` + 액션 8종 + 링크 유형 3종, 충돌 감지, tainted 처리, `/memory` 화면, MCP `remember`·`get_context`·`cite` | AI 가 제안 → 사람 확인 → 다음 세션 팩에 등장하는 E2E, 충돌 신호 E2E |
 | **M4 큐레이터** | 에피소드 요약, 기억 추출·병합·만료, 승격 제안, 플레이북 문서 | 매일 밤 큐레이터 실행 결과가 승인함에 "기억 검토 n건"으로 나타남 |
 | **M5 신뢰** | 에이전트 역할·범위, 기억 신뢰도 집계, 자동 착지 | 등급 상승은 사람 승인, 하락은 자동 — 테스트로 고정 |
@@ -321,4 +324,68 @@ M1 → M3 까지가 "AI 와 사람이 함께 관리하는 기억/지식"의 최�
 - 어휘·관계·참조 질의는 5만 구획 잡음 속에서도 전부 5위 안. 무너지는 것은 **의미 질의**("클라우드 서버 비용" → AWS, "신규 문의 들어온 가게" → 카페 온도): 50k 에서 0.40. 이것이 M2 의 목표치다.
 - 첫 구현(검색어별 전체 id 수집 + LIKE 스캔)은 50k 에서 p50 1.4초였다. bm25 상위 후보 + 문서빈도 상한 + 어절 접두 색인으로 40배 줄였다.
 - 이 규모의 골든셋에서는 하이브리드와 어휘만의 차이가 작다 — 카드가 이미 링크 상대의 이름을 텍스트로 품기 때문. 관계 신호는 순서를 바로잡는 역할 (예: "누가 카페 온도를 소개했나" 3위 → 2위). 골든셋을 실제 사용 질의로 키우는 것이 다음 과제.
+
+## 12. M2 구현 기록 (v0.4)
+
+### 무엇이 들어갔나
+
+| 위치 | 내용 |
+|---|---|
+| 마이그레이션 5 | `embedding_spaces` (공급자·모델·차원(0 = 첫 응답에서 확정)·주소·키 환경변수 이름·접두사·`local_only`·`auto_activate`·상태·마지막 오류) |
+| `lib/knowledge/vectors.ts` | `now-vec.db` 를 `ATTACH … AS vec` (sqlite-vec 적재 실패 시 이유를 기억하고 강등). `vec.vectors(space_id, content_hash, f)` + 공간별 `vec.knn_<id>` = `vec0(e bit[D])`. `storeVectors`(INSERT OR IGNORE, 멱등) · `knn`(bit 후보 `max(k·20, 200)` → float 내적 재정렬) · `gcVectors` · `spaceCoverage` |
+| `lib/knowledge/embed.ts` | 공급자 어댑터 5종 (배치 32 · 문서 60초 / 질의 5초 시간 초과 · L2 정규화 · 차원 검증 · 한국어 오류, 키 값은 오류 문구에서도 지움) · `isLocalUrl` |
+| `lib/knowledge/embedder.ts` | `embedPending` — building·active 공간마다 벡터 없는 고유 해시(카드 먼저)를 배치로. 실패 시 `last_error` + 지수 백오프(1분×2ⁿ, 최대 1시간, `settings.embed_backoff:<id>`). `auto_activate` 공간은 다 차면 **시스템 액션**으로 활성화(감사 기록). 질의 임베딩 LRU 500 |
+| `lib/knowledge/redact.ts` | 색인 단계 비밀값 가림 (`nows_`/`now_` 토큰 · `sk-…` · `AKIA…` · Bearer · PEM 개인 키 · `password: …` 류). 해시도 가린 텍스트로 |
+| `lib/knowledge/recall.ts` | `async`. 모드 `hybrid`(참조 + 어휘 + 의미 + 관계 + 주변) · `lexical` · `vector`(의미만, 평가용). 의미 목록 = 질의 임베딩 1회 → KNN `max(k·4, 40)` → 청크 → 소유자별 최고 점수 → `MIN_SEMANTIC` 미만 제외. 관계 씨앗 = 참조 → 어휘·의미 상위를 번갈아. 결과에 `similarity` · `vector` · `degraded` |
+| 액션 | `embedding.space_create` (로컬 low / 외부 high) · `embedding.activate` (로컬 low / 외부 high, `force`) · `embedding.retire` — 전부 `humanOnly` |
+| 표면 | `/search` 근거 태그 "의미"(green) + 유사도, 상태줄(공간·차원·%) · 강등 경고. `/system` 임베딩 공간 표(상태 · 로컬/외부 · % · 마지막 오류 · 활성화/폐기) · 벡터 파일 경로·크기 · sqlite-vec 오류. 도구·MCP·REST·CLI 의 `recall` 에 `similarity`·`vector`·`degraded`. 도구 실행이 `async` 로 (`callTool`·`handleMcp`) |
+| 워커 | 틱: 색인 → 임베딩(`embed: false` 로 끔). 상주 루프에서는 임베딩을 기다리지 않는다. 시간당 스윕 때 `gcVectors` |
+| 평가 | `eval:recall` 이 `lexical · vector · hybrid` 출력, `--embed-url/--embed-model/--embed-provider/--query-prefix/--passage-prefix`, `--vec-bench N --dim D` |
+
+### 설계에서 바뀐 것
+
+- **`embed_queue` 테이블 없음.** 할 일 = "청크에는 있는데 이 공간의 벡터에는 없는 해시" 를 `chunks LEFT JOIN vec.vectors` 로 바로 구한다. 큐를 따로 두면 청크 수정·삭제·공간 추가마다 큐를 맞춰야 하는데, 해시 조인은 그 자체로 멱등이고 벡터 파일을 지워도 저절로 다시 채워진다. 5만 청크가 다 찬 상태에서 틱당 약 17ms (이 컨테이너).
+- **`+f float[D]` 보조 컬럼 대신 `vec.vectors.f` BLOB.** vec0 보조 컬럼은 KNN 결과 행에서만 읽혀 재정렬에 쓰기 불편하고, 같은 해시를 여러 청크가 공유하므로 (공간, 해시)당 한 행이 맞다. vec0 의 `business_id partition key` 도 뺐다 — 한 해시가 여러 사업의 청크일 수 있고, 범위 필터는 청크로 되돌릴 때 건다.
+- **벡터 파일은 연결마다 ATTACH.** 본 DB 가 `:memory:` 이면 벡터도 메모리 (`NOW_VEC_PATH` 보다 우선 — 테스트·평가가 실제 파일을 건드리지 않게). ATTACH 는 트랜잭션 안에서 못 하므로 `embedding.activate` 는 `noTransaction` 으로 먼저 붙이고 상태 변경만 트랜잭션으로.
+- **상주 워커는 임베딩을 기다리지 않는다.** 느린 로컬 모델(CPU Ollama 로 128개에 수 초)이 다음 틱의 스케줄·신호 감지를 붙잡지 않도록 background 틱에서는 띄워 두고(`inflight` 로 겹침 방지) 다음 틱으로 넘어간다. `--once`·테스트는 기다린다.
+- **질의 캐시 키** = 공간 id + 생성 시각 + 공급자 + 모델 + 주소 + 질의 접두사 + 정규화된 질의 (id 만으로는 DB 를 새로 만들 때 되풀이된다).
+- **비밀값 가림의 할당문**은 값만 가리고 키 이름은 남긴다 (`password: [비밀값 가림]`) — "비밀번호가 적힌 메모" 로는 찾을 수 있게. 키 이름 앞에 경계를 두지 않는다(명세 그대로) — `\b` 를 붙이면 `_` 가 단어 문자라 `DB_PASSWORD=` · `client_secret=` · `GITHUB_TOKEN=` 같은 .env 형태를 놓친다.
+- **색인 형식 버전** (`settings.index_format`, 현재 `2` = 비밀값 가림). 저장된 값과 다르면 다음 `indexPending`/`ensureIndexed` 가 주기 스윕을 기다리지 않고 전체 재색인한다. M1 에서 가리지 않고 색인한 청크가 업그레이드 직후 만든 (외부) 공간으로 나가지 않도록 — 워커 틱은 색인이 임베딩보다 먼저다. 가림·카드 규칙을 바꾸면 이 값을 올린다. 방어를 한 겹 더: `embedPending` 도 공급자로 보내기 직전에 `redactSecrets` 를 다시 적용한다 (해시는 청크의 것 — 멱등성 유지).
+- **벡터 파일 ↔ 본 DB 묶기** (`vec.spaces(space_id, fingerprint)`). 지문 = 본 DB 공간 행의 생성 시각·공급자·모델·주소·문서 접두사. 붙일 때(attach) 지문이 다르거나 없는 공간의 벡터·knn 테이블을 버리고, 쓸 때 다시 확인한다. 본 DB 만 새로 만들거나 복원해 공간 id(1…)가 되풀이돼도 옛 모델 벡터를 "이미 임베딩됨"으로 보거나 옛 차원 knn 테이블에 막혀 영구 실패하지 않는다. `gcVectors` 도 지문이 다른 공간을 정리한다.
+- **요청 경로의 질의 임베딩은 짧게.** 문서 배치는 60초지만 질의는 5초(`QUERY_TIMEOUT_MS`) — 넘으면 어휘 + 관계로 강등. 공급자 장애(연결 실패·시간 초과·5xx·429 — `EmbedError.outage`)로 질의가 실패하면 30초 동안 같은 공간에 다시 묻지 않고(프로세스 안 음성 캐시), 워커가 문서 배치에서 장애를 확인해 백오프 중이면(`settings.embed_outage:<id>`) 아예 묻지 않는다. 입력·인증 오류(4xx)는 장애로 보지 않는다 — 문서 하나가 거부됐다고 의미 검색을 끄지 않게. KNN·청크 조회의 SQLite 오류도 `degraded: "벡터 검색 실패 — …"` 로 강등한다.
+- **의미 검색을 건너뛰는 질의는 식별자뿐인 질의(`CLT-0003`)만.** 한 글자(돈·차)나 불용어뿐이라 어휘 검색어가 비어도 임베딩한다. 건너뛸 때도 활성 공간이 있으면 `vector` 에 알린다 (`null` = 활성 공간 없음).
+- **가중치** ref 3 · lexical 1 · semantic 1 · about 0.7 · graph 0.5 (명세 그대로). 검증용 WordLlama(256차원)로 semantic 0.5~1.5 를 훑었을 때 골든셋 24건의 차이는 MRR ±0.02 안이었다 — 약한 모델 하나에 맞춰 조정하지 않는다. `MIN_SEMANTIC` 0.25 도 그대로 (WordLlama 는 무관한 쌍도 0.3~0.5 라 이 값이 거의 자르지 않는다 — 모델별 분포 차이. 실제 모델(bge-m3)로 재평가할 것).
+- **bit 후보 수.** `knn()` 기본은 명세대로 `max(k·20, 200)` 이지만, recall 은 `max(200, 2×요청 수)` 로 부른다 (요청 수 = `max(k·4, 40)`). vec0 의 top-k 선택 비용이 후보 수에 거의 비례하기 때문이다 — 5만 × 1024차원 bit 에서 후보 10 ≈ 3ms · 200 ≈ 14ms · 400 ≈ 33ms · 800 ≈ 70ms · 1600 ≈ 104ms. 명세식(k=10 → 요청 40 → 후보 800)이면 합성 5만 청크 평가에서 vector p50 75ms, 바꾼 뒤 15ms (품질 동일). vec0 의 k 상한은 4096.
+- **범위·유형 필터는 KNN 뒤에.** 후보를 청크로 되돌린 다음 사업 범위·유형·알 수 없는 소유자를 거른다. 그래서 좁은 필터(다른 사업이 대부분인 색인에서 한 사업만, 드문 유형만)에서는 의미 목록이 비거나 짧아질 수 있다 — 어휘·관계 목록은 영향 없음. 규모가 커지면 vec0 partition key(사업)나 필터별 후보 확대를 검토.
+
+### 측정 (이 개발 컨테이너)
+
+```bash
+npm run eval:recall                                                                  # 공간 없이 (M1 과 같은 수치여야 한다)
+npm run eval:recall -- --embed-url http://127.0.0.1:8088/v1 --embed-model wordllama --verbose   # 검증용 WordLlama 256차원
+npm run eval:recall -- --embed-url http://127.0.0.1:11434 --embed-provider ollama --embed-model bge-m3
+npm run eval:recall -- --vec-bench 50000 --dim 1024
+```
+
+| 조건 | 모드 | R@1 | R@5 | MRR | p50 | p95 |
+|---|---|---|---|---|---|---|
+| 예시 데이터, 공간 없음 | lexical | 0.75 | 0.96 | 0.84 | 0.9 ms | 1.3 ms |
+| 〃 | hybrid | 0.75 | 0.96 | 0.85 | 1.7 ms | 3.5 ms |
+| 예시 데이터 + WordLlama 256 | lexical | 0.75 | 0.96 | 0.84 | 1.0 ms | 5.6 ms |
+| 〃 | vector | 0.46 | 0.83 | 0.60 | 4.9 ms | 12.2 ms |
+| 〃 | hybrid | **0.79** | 0.96 | **0.88** | 4.1 ms | 6.9 ms |
+| + 합성 50,000 구획 (WordLlama 로 임베딩 58.8초) | vector | | | | 14.6 ms | |
+| 〃 | hybrid | | | | 45.2 ms | 71.7 ms |
+| 예시 데이터 + bge-m3 1024 (Ollama) | hybrid | 미측정 — 이 환경에는 Ollama 가 없다 (위 명령으로 측정) | | | | |
+
+| `--vec-bench 50000 --dim 1024` | 후보 | knn p50 | knn p95 | recall@10 |
+|---|---|---|---|---|
+| 무작위 단위 벡터 (bit 양자화 최악 조건) | 200 (기본) | 16.4 ms | 23.8 ms | 0.37 |
+| 〃 | 1000 | 108.1 ms | 143.0 ms | 0.67 |
+| 군집 벡터 (중심 200 + 잡음) | 200 (기본) | 16.3 ms | 25.4 ms | 0.99 |
+| 〃 | 1000 | 107.9 ms | 143.3 ms | 1.00 |
+
+- **WordLlama 는 검증용이다.** 이 개발 환경의 네트워크 정책이 Hugging Face·Ollama 레지스트리를 막아 실제 임베딩 모델(bge-m3·e5)을 받을 수 없었다. WordLlama(정적 토큰 임베딩, PyPI 휠에 가중치 포함)를 OpenAI 호환 서버로 띄워 공급자 경로 전체를 실제 모델로 돌렸다. 약한 모델에서도 하이브리드가 R@1 +0.04 · MRR +0.04 — 의미 질의 품질의 진짜 수치는 bge-m3 로 다시 재야 한다.
+- 실제 문장 임베딩은 군집 구조가 있으므로 bit 1차 후보 200 → float 재정렬이 정확 검색과 거의 같다(0.99). 무작위 벡터(0.37)는 이론적 최악 조건. 50k·1024차원 KNN p95 는 약 24ms 로 목표(20ms)를 조금 넘는다 — vec0 의 bit 스캔 자체 비용(≈14ms)이 대부분.
+- 5만 구획 하이브리드 p95 72ms 의 대부분은 어휘 후보 채점과 관계 확장이다 (의미 목록 자체는 15ms).
 

@@ -80,7 +80,7 @@ now events --follow --type signal.
 | `get_overview` | AI 모드, 신호 수, 승인 대기, 업무·미수금·현금흐름 — **시작할 때 먼저** |
 | `list_signals` | 할 일 큐. 각 신호에 `suggested` 액션과 파라미터 |
 | `describe_ontology` | 객체 유형·액션·규약 |
-| `recall` | 자연어 회상 검색 — 이름·속성·접촉 이력·문서 본문(어휘) + 관계(그래프). 흐릿하게 찾을 때 먼저. `about` 으로 기준 객체 주변 우선 |
+| `recall` | 자연어 회상 검색 — 이름·속성·접촉 이력·문서 본문(어휘) + 뜻이 비슷한 표현(의미 — 임베딩 공간이 활성일 때) + 관계(그래프). 흐릿하게 찾을 때 먼저. `about` 으로 기준 객체 주변 우선. 결과 `why`: `lexical` 내용 · `semantic` 의미 유사(`similarity` = 코사인) · `graph` 관계 · `ref` 직접 참조 · `about` 주변. `vector` 는 쓴 공간(없으면 null), `degraded` 가 있으면 의미 검색 없이 어휘 + 관계로만 찾은 결과 |
 | `search_objects` / `get_object` | 유형별 목록 · 읽기 (속성·raw·연결·이력·현재 가능한 액션) |
 | `list_actions` | 액션 카탈로그 + 입력 JSON Schema (사람 전용 액션 제외) |
 | `run_action` | 실행. `reason` 필수 — 승인자와 감사 로그에 보인다 |

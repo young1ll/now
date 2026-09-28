@@ -25,6 +25,7 @@ AI 가 운영하고 사람이 관망·개입하는 1인 사업 운영 체제. Ne
 ## 온톨로지
 - 관계는 `lib/ontology/schema.ts` (외래키·파생) + `link_types`/`links` (사용자 정의). 객체 삭제 액션은 `deleteLinksFor` 호출.
 - 검색 색인(`lib/knowledge/*`, `chunks`)은 파생 데이터 — 워커가 `action.applied` 이벤트로 유지하고 언제든 `reindexAll` 로 재생성된다. 새 객체 유형은 `cards.ts` 의 `renderOwners` 에도 카드를 추가하고, 검색 품질은 `npm run eval:recall` (골든셋 `tests/fixtures/recall.jsonl`) 로 확인.
+- 벡터는 `now-vec.db`(ATTACH `vec`)의 파생 캐시 — 백업 대상 아님, 지우면 워커(`embedPending`)가 다시 채운다. 문서 임베딩은 워커에서만, 요청 경로는 질의 1회. 임베딩 공간은 `embedding.*` 액션으로만: 외부 공급자(본문이 기기를 떠남) = high · 전부 humanOnly. 청크는 `redactSecrets` 를 거친다.
 - 그래프 질의는 `lib/ontology/graph.ts`. 노드 색은 `lib/ontology/palette.ts` (dataviz 검증값 — 임의 변경 금지).
 - 서버 컴포넌트에서 `"use client"` 모듈의 상수를 import 하지 않는다 (클라이언트 참조가 된다).
 

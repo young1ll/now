@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import type { DB } from "@/lib/db";
 import type { ObjectType } from "@/lib/ontology/types";
-import { type RecallMode, recall } from "./recall";
+import { type RecallMode, type RecallOpts, recall } from "./recall";
 
 export type GoldenCase = { q: string; expect: { type: ObjectType; title: string }[]; kind: "lexical" | "relation" | "ref" | "semantic" };
 
@@ -18,6 +18,8 @@ export type EvalSummary = {
   p95: number;
   byKind: Record<string, { n: number; recallAt5: number }>;
   cases: CaseResult[];
+  /** 의미 검색이 실패해 어휘 + 관계로 강등된 질의 수 */
+  degraded: number;
 };
 
 export function loadGolden(file: string): GoldenCase[] {
@@ -33,14 +35,18 @@ const pct = (xs: number[], p: number) => {
   return s.length ? s[Math.min(s.length - 1, Math.floor(p * s.length))] : 0;
 };
 
-export function evaluate(db: DB, cases: GoldenCase[], mode: RecallMode, k = 10): EvalSummary {
-  const results: CaseResult[] = cases.map((c) => {
+export async function evaluate(db: DB, cases: GoldenCase[], mode: RecallMode, k = 10, o: RecallOpts = {}): Promise<EvalSummary> {
+  const results: CaseResult[] = [];
+  let degraded = 0;
+  // 지연을 재므로 한 건씩 차례로
+  for (const c of cases) {
     const t = performance.now();
-    const r = recall(db, { query: c.q, k, mode });
+    const r = await recall(db, { query: c.q, k, mode }, o);
     const ms = performance.now() - t;
+    if (r.degraded) degraded++;
     const idx = r.hits.findIndex((h) => c.expect.some((e) => e.type === h.ref.type && h.title.includes(e.title)));
-    return { ...c, rank: idx >= 0 ? idx + 1 : null, ms, top: r.hits.slice(0, 3).map((h) => `${h.displayId} ${h.title}`) };
-  });
+    results.push({ ...c, rank: idx >= 0 ? idx + 1 : null, ms, top: r.hits.slice(0, 3).map((h) => `${h.displayId} ${h.title}${h.similarity !== undefined ? ` (${h.similarity.toFixed(2)})` : ""}`) });
+  }
   const at = (n: number, rs = results) => (rs.length ? rs.filter((r) => r.rank !== null && r.rank <= n).length / rs.length : 0);
   const kinds = [...new Set(results.map((r) => r.kind))];
   return {
@@ -56,5 +62,6 @@ export function evaluate(db: DB, cases: GoldenCase[], mode: RecallMode, k = 10):
       return [kd, { n: rs.length, recallAt5: at(5, rs) }];
     })),
     cases: results,
+    degraded,
   };
 }

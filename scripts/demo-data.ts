@@ -6,8 +6,11 @@ import { executeAction } from "@/lib/ontology/execute";
 import { type Actor, OPERATOR } from "@/lib/ontology/types";
 import { insertSnapshot } from "@/lib/repos/snapshots";
 
-/** 빈 DB 에 예시 데이터를 넣고, 운영 에이전트 토큰을 돌려준다 */
-export function seedDemo(d: DB): string {
+/**
+ * 빈 DB 에 예시 데이터를 넣고, 운영 에이전트 토큰을 돌려준다.
+ * embeddingSpace=false: 로컬 Ollama 임베딩 공간을 만들지 않는다 (평가가 자기 공간만 채우도록).
+ */
+export function seedDemo(d: DB, o: { embeddingSpace?: boolean } = {}): string {
   const t = today();
   const ago = (n: number) => addDays(t, -n);
   let agent: Actor = OPERATOR;
@@ -108,6 +111,8 @@ export function seedDemo(d: DB): string {
       cooldown_sec: 300,
     });
     H("trigger.create", { name: "평일 아침 브리핑", kind: "schedule", schedule: "45 7 * * 1-5", target: "agent", profile_id: ops.profile_id, prompt_template: "오늘의 운영 브리핑: get_overview 와 list_signals 로 현황을 정리하고, 오늘 할 일을 note.create 로 '오늘의 브리핑' 문서로 남겨라." });
+    // ── 의미 검색: 로컬 임베딩 공간 (Ollama 가 없으면 /system 에 행동 가능한 오류가 보이고, 검색은 어휘 + 관계로 동작) ──
+    if (o.embeddingSpace !== false) H("embedding.space_create", { name: "로컬 bge-m3 (Ollama)", provider: "ollama", model: "bge-m3", auto_activate: true });
     H("trigger.create", { name: "승인 요청 → Slack", kind: "event", event_pattern: "action.pending", target: "webhook", webhook_url: "https://hooks.slack.com/services/…", secret_env: "SLACK_WEBHOOK_SECRET", enabled: false });
   })();
 

@@ -23,8 +23,12 @@ lib/ontology/
   ops.ts          오퍼레이션 집계
   form.ts         FormData → 액션 파라미터
 lib/ontology/schema.ts · graph.ts   속성·링크 유형 정의, 그래프 질의 (이웃·경로·전체)
-lib/events/       워커 (신호 감지·cron·트리거 매칭·실행·색인 유지), SSE
+lib/events/       워커 (신호 감지·cron·트리거 매칭·실행·색인 유지·임베딩·벡터 정리), SSE
 lib/knowledge/    검색 색인(파생): 객체 카드·문서 구획 → chunks + FTS, 하이브리드 recall, 품질 평가 (docs/MEMORY.md)
+  redact.ts       청크에 넣기 전 비밀값 가림 (FTS · 임베딩 공급자 어디에도 원문 비밀이 가지 않게)
+  vectors.ts      now-vec.db (ATTACH vec, sqlite-vec): vectors(f float) + 공간별 knn_<id>(bit) · 저장 · KNN(bit→float 재정렬) · 정리
+  embed.ts        임베딩 공급자 어댑터 (Ollama · OpenAI · Gemini · Voyage · OpenAI 호환) · 로컬 주소 판정
+  embedder.ts     임베딩 워커 embedPending (해시 중복 제거 · 백오프 · 자동 활성화) · 질의 임베딩 LRU
 lib/ai/           AI 런타임: 공급자 어댑터 (Anthropic SDK · OpenAI 호환 · Gemini) + 세션 실행 + 로컬 CLI
 lib/agent/
   auth.ts         Bearer 토큰 → 에이전트 행위자 (정지·폐기 거부)

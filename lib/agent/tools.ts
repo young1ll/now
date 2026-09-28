@@ -23,7 +23,8 @@ export type Tool = {
   name: string;
   description: string;
   input: z.ZodType<Record<string, unknown>>;
-  run: (db: DB, actor: Actor, args: Record<string, unknown>) => unknown;
+  /** 동기 또는 비동기 (recall 은 질의 임베딩을 기다린다) */
+  run: (db: DB, actor: Actor, args: Record<string, unknown>) => unknown | Promise<unknown>;
 };
 
 /** 감사 run → 에이전트에게 돌려줄 간결한 형태 */
@@ -52,7 +53,7 @@ export function runOut(r: RunView) {
 
 const scopeArg = z.number().int().positive().optional().describe("사업 id 로 범위 제한 (생략 시 전체)");
 
-function def<S extends z.ZodRawShape>(name: string, description: string, shape: S, run: (db: DB, actor: Actor, args: z.infer<z.ZodObject<S>>) => unknown): Tool {
+function def<S extends z.ZodRawShape>(name: string, description: string, shape: S, run: (db: DB, actor: Actor, args: z.infer<z.ZodObject<S>>) => unknown | Promise<unknown>): Tool {
   return { name, description, input: z.object(shape) as unknown as Tool["input"], run: run as Tool["run"] };
 }
 
@@ -133,7 +134,7 @@ export const TOOLS: Tool[] = [
   ),
   def(
     "recall",
-    "자연어 회상 검색: 이름·내용·접촉 이력·문서 본문(어휘)과 관계(그래프)를 함께 본다. 무엇을 찾아야 할지 흐릿할 때(\"SSO 요구한 고객\", \"부가세 마감 절차\", \"카페 온도를 소개한 사람\") 먼저 쓰고, 결과의 ref 로 get_object 를 호출하라. why: lexical=내용 일치 · graph=상위 결과와 연결 · ref=직접 참조 · about=기준 객체 주변.",
+    "자연어 회상 검색: 이름·내용·접촉 이력·문서 본문(어휘), 뜻이 비슷한 표현(의미 — 임베딩 공간이 활성일 때), 관계(그래프)를 함께 본다. 무엇을 찾아야 할지 흐릿할 때(\"SSO 요구한 고객\", \"부가세 마감 절차\", \"클라우드 서버 비용\") 먼저 쓰고, 결과의 ref 로 get_object 를 호출하라. why: lexical=내용 일치 · semantic=의미 유사(similarity=코사인) · graph=상위 결과와 연결 · ref=직접 참조 · about=기준 객체 주변. degraded 가 있으면 의미 검색 없이 어휘 + 관계로만 찾은 결과다.",
     {
       query: z.string().min(1).describe("자연어 질의 또는 핵심어. 객체 참조(CLT-0003)도 가능"),
       about: z.string().optional().describe('이 객체 주변을 우선 — "client:3" 또는 "CLT-0003"'),
@@ -141,13 +142,15 @@ export const TOOLS: Tool[] = [
       business_id: scopeArg,
       k: z.number().int().min(1).max(50).optional().describe("최대 결과 수 (기본 10)"),
     },
-    (db, _a, { query, about, types, business_id, k }) => {
+    async (db, _a, { query, about, types, business_id, k }) => {
       const aboutRef = about ? parseRef(about) : undefined;
       if (about && (!aboutRef || !objectExists(db, aboutRef))) throw new ToolError(`객체를 찾을 수 없습니다: ${about}`);
-      const r = recall(db, { query, about: aboutRef, types, scope: business_id ?? null, k: k ?? 10 });
+      const r = await recall(db, { query, about: aboutRef, types, scope: business_id ?? null, k: k ?? 10 });
       return {
         terms: r.terms,
         took_ms: r.tookMs,
+        vector: r.vector,
+        ...(r.degraded ? { degraded: r.degraded } : {}),
         hits: r.hits.map((h) => ({
           ref: h.key,
           display_id: h.displayId,
@@ -155,6 +158,7 @@ export const TOOLS: Tool[] = [
           title: h.title,
           status: h.status?.label ?? null,
           why: h.why,
+          ...(h.similarity !== undefined ? { similarity: h.similarity } : {}),
           matched: h.matched,
           snippet: h.snippet,
           via: h.via ? `${h.via.from} —${h.via.label}` : undefined,
@@ -294,12 +298,12 @@ function graphOut(g: Graph) {
 
 export const TOOL_MAP = Object.fromEntries(TOOLS.map((t) => [t.name, t]));
 
-export function callTool(db: DB, actor: Actor, name: string, args: unknown): unknown {
+export async function callTool(db: DB, actor: Actor, name: string, args: unknown): Promise<unknown> {
   const tool = Object.hasOwn(TOOL_MAP, name) ? TOOL_MAP[name] : undefined;
   if (!tool) throw new ToolError(`알 수 없는 도구: ${name}`);
   const parsed = tool.input.safeParse(args ?? {});
   if (!parsed.success) throw new ToolError(parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
-  return tool.run(db, actor, parsed.data);
+  return await tool.run(db, actor, parsed.data);
 }
 
 export function toolJsonSchema(t: Tool) {

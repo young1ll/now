@@ -23,7 +23,12 @@ export async function POST(req: Request) {
     return Response.json({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid Request: empty batch" } }, { status: 400 });
   }
   const messages = (Array.isArray(body) ? body : [body]) as JsonRpcRequest[];
-  const responses = messages.map((m) => handleMcp(db(), auth.actor, m)).filter((r) => r !== null);
+  // 순서대로 처리 (배치 안의 쓰기가 앞 메시지의 결과를 볼 수 있게)
+  const responses = [];
+  for (const m of messages) {
+    const r = await handleMcp(db(), auth.actor, m);
+    if (r !== null) responses.push(r);
+  }
   if (responses.length === 0) return new Response(null, { status: 202 });
   return Response.json(Array.isArray(body) ? responses : responses[0]);
 }

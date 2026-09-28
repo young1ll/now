@@ -8,14 +8,25 @@ import { OBJECT_TYPES, type ObjectType, type Ref } from "@/lib/ontology/types";
 import { lastEventId } from "@/lib/repos/events";
 import { getSetting, setSetting } from "@/lib/repos/settings";
 import { INDEXED_TYPES, type OwnerDoc, contentHash, estimateTokens, renderOwners } from "./cards";
+import { redactSecrets } from "./redact";
 
 export type IndexResult = { rendered: number; changed: number; removed: number };
 
 const SWEEP_EVERY_MS = 60 * 60_000;
 /** 한 틱에 이보다 많은 객체가 바뀌었으면 전체 재색인이 더 싸다 */
 const MAX_INCREMENTAL = 300;
+/**
+ * 색인 형식 버전. 청크를 만드는 규칙(비밀값 가림 등)이 바뀌면 올린다 — 저장된 값과 다르면 다음 색인 호출이
+ * 곧바로 전체 재색인한다 (주기 스윕을 기다리지 않는다). 2 = M2 비밀값 가림: M1 에서 가리지 않고 색인한 청크가
+ * 임베딩 공급자(외부일 수 있음)로 가기 전에 가린 텍스트로 다시 쓰이게 한다 (같은 틱에서 색인이 임베딩보다 먼저).
+ */
+export const INDEX_FORMAT = "2";
+const FORMAT_KEY = "index_format";
+const formatStale = (db: DB) => getSetting(db, FORMAT_KEY) !== INDEX_FORMAT;
 
-function writeOwner(db: DB, doc: OwnerDoc): boolean {
+function writeOwner(db: DB, raw: OwnerDoc): boolean {
+  // 비밀값은 청크에 들어가기 전에 가린다 — FTS·임베딩 공급자 어디에도 원문이 가지 않도록 (해시도 가린 텍스트로)
+  const doc = { ...raw, chunks: raw.chunks.map(redactSecrets) };
   const existing = db.prepare("SELECT seq, content_hash FROM chunks WHERE owner_type = ? AND owner_id = ? ORDER BY seq").all(doc.ref.type, doc.ref.id) as { seq: number; content_hash: string }[];
   const hashes = doc.chunks.map(contentHash);
   if (existing.length === hashes.length && existing.every((e, i) => e.content_hash === hashes[i] && e.seq === i)) return false;
@@ -85,6 +96,7 @@ export function reindexAll(db: DB, now = new Date()): IndexResult {
     // 알 수 없는 소유자 유형(과거 버전·실험 데이터) 정리
     db.prepare(`DELETE FROM chunks WHERE owner_type NOT IN (${OBJECT_TYPES.map(() => "?").join(",")})`).run(...OBJECT_TYPES);
     setSetting(db, "index_swept_at", now.toISOString());
+    setSetting(db, FORMAT_KEY, INDEX_FORMAT);
   })();
   return res;
 }
@@ -106,7 +118,7 @@ function isRef(x: unknown): x is Ref {
 
 /**
  * 워커 틱마다 호출. 마지막 처리 이후의 action.applied 이벤트에서 바뀐 객체를 모아 다시 색인한다.
- * 처음이거나 한 시간이 지났으면 전체 스윕 (이벤트 밖의 변화 — 사용자 정의 링크 상대의 이름 변경 등 — 을 따라잡는다).
+ * 처음이거나, 색인 형식이 바뀌었거나, 한 시간이 지났으면 전체 스윕 (이벤트 밖의 변화 — 사용자 정의 링크 상대의 이름 변경 등 — 을 따라잡는다).
  */
 export function indexPending(db: DB, now = new Date(), o: { periodicSweep?: boolean } = {}): IndexResult & { mode: "none" | "incremental" | "sweep" } {
   // 커서 전진과 색인 쓰기를 한 트랜잭션으로 (여러 워커가 돌아도 결과가 같다)
@@ -117,7 +129,7 @@ function pending(db: DB, now: Date, periodicSweep: boolean): IndexResult & { mod
   const swept = getSetting(db, "index_swept_at");
   const cursor = Number(getSetting(db, "index_cursor") ?? 0);
   const head = lastEventId(db);
-  if (!swept || (periodicSweep && now.getTime() - new Date(swept).getTime() > SWEEP_EVERY_MS)) {
+  if (!swept || formatStale(db) || (periodicSweep && now.getTime() - new Date(swept).getTime() > SWEEP_EVERY_MS)) {
     const r = reindexAll(db, now);
     setSetting(db, "index_cursor", String(head));
     return { ...r, mode: "sweep" };
@@ -146,7 +158,7 @@ function pending(db: DB, now: Date, periodicSweep: boolean): IndexResult & { mod
  * 워커가 꺼져 있어도(NOW_WORKER=off) 검색이 최신이도록. 주기 스윕은 워커 몫 — 요청 경로에서는 하지 않는다.
  */
 export function ensureIndexed(db: DB) {
-  if (!getSetting(db, "index_swept_at") || lastEventId(db) > Number(getSetting(db, "index_cursor") ?? 0)) indexPending(db, new Date(), { periodicSweep: false });
+  if (!getSetting(db, "index_swept_at") || formatStale(db) || lastEventId(db) > Number(getSetting(db, "index_cursor") ?? 0)) indexPending(db, new Date(), { periodicSweep: false });
 }
 
 export type IndexStats = { chunks: number; owners: number; tokens: number; byType: Record<string, number>; sweptAt: string | null; cursor: number; lag: number };

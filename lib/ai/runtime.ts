@@ -67,16 +67,21 @@ export async function executeSession(db: DB, sessionId: number, opts: RunOpts = 
         saveSession(db, sessionId, { status: "succeeded", final_text: finalText, transcript, steps, tool_calls: toolCalls, usage, finished: true });
         return;
       }
-      const results: ToolResult[] = r.toolCalls.map((c) => {
+      // 도구는 순서대로 (앞 호출의 쓰기를 뒤 호출이 본다)
+      const results: ToolResult[] = [];
+      for (const c of r.toolCalls) {
         toolCalls++;
-        if (c.parseError) return { id: c.id, name: c.name, content: c.parseError, isError: true };
+        if (c.parseError) {
+          results.push({ id: c.id, name: c.name, content: c.parseError, isError: true });
+          continue;
+        }
         try {
-          return { id: c.id, name: c.name, content: clip(JSON.stringify(callTool(db, actor, c.name, c.args), null, 1)), isError: false };
+          results.push({ id: c.id, name: c.name, content: clip(JSON.stringify(await callTool(db, actor, c.name, c.args), null, 1)), isError: false });
         } catch (e) {
           const msg = e instanceof ToolError ? e.message : `내부 오류: ${e instanceof Error ? e.message : String(e)}`;
-          return { id: c.id, name: c.name, content: msg, isError: true };
+          results.push({ id: c.id, name: c.name, content: msg, isError: true });
         }
-      });
+      }
       for (const res of results) transcript.push({ role: "tool", id: res.id, name: res.name, result: res.content, is_error: res.isError });
       adapter.addToolResults(results);
     }

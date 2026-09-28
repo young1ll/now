@@ -151,7 +151,7 @@ describe("정책 · 실행 · 감사", () => {
     assert.deepEqual([task.client_id, task.due_date], [null, null]);
   });
 
-  it("발행된 청구서의 수정은 고위험으로 격상된다", () => {
+  it("발행된 청구서의 수정은 고위험으로 격상된다", async () => {
     const { a, agent, human, run } = setup();
     const inv = run(human, "invoice.create", { business_id: a, items: [{ description: "x", unit_price: 1000 }] }).refs[0].id;
     assert.equal(run(agent, "invoice.update", { id: inv, items: [{ description: "y", unit_price: 2000 }] }).status, "applied");
@@ -161,7 +161,7 @@ describe("정책 · 실행 · 감사", () => {
     assert.equal(r.risk, "high");
   });
 
-  it("에이전트 등록 토큰은 결과(out)로만 나오고 감사 기록엔 없다", () => {
+  it("에이전트 등록 토큰은 결과(out)로만 나오고 감사 기록엔 없다", async () => {
     const { db, human, run } = setup();
     const r = run(human, "agent.register", { name: "새 에이전트" });
     assert.match(String(r.out?.token), /^now_/);
@@ -174,7 +174,7 @@ describe("정책 · 실행 · 감사", () => {
 });
 
 describe("온톨로지 · 신호", () => {
-  it("상태에 따라 가능한 액션만 노출한다", () => {
+  it("상태에 따라 가능한 액션만 노출한다", async () => {
     const { db, a, human, run } = setup();
     const inv = run(human, "invoice.create", { business_id: a, items: [{ description: "x", unit_price: 1000 }] }).refs[0].id;
     const acts = () => OBJECTS.invoice.actionsFor!(OBJECTS.invoice.get(db, inv)!.raw);
@@ -185,7 +185,7 @@ describe("온톨로지 · 신호", () => {
     assert.deepEqual(acts(), ["invoice.update"]);
   });
 
-  it("객체 조회·연결", () => {
+  it("객체 조회·연결", async () => {
     const { db, a, human, run } = setup();
     const c = run(human, "client.create", { business_id: a, name: "한빛상사", status: "active" }).refs[0].id;
     run(human, "task.create", { business_id: a, title: "부가세", client_id: c });
@@ -196,7 +196,7 @@ describe("온톨로지 · 신호", () => {
     assert.equal(OBJECTS.client.list(db, a, "한빛").length, 1);
   });
 
-  it("지연 업무·미수금·무응대 리드 신호와 제안 액션", () => {
+  it("지연 업무·미수금·무응대 리드 신호와 제안 액션", async () => {
     const { db, a, human, run } = setup();
     run(human, "task.create", { business_id: a, title: "늦은 업무", due_date: "2026-09-01" });
     const c = run(human, "client.create", { business_id: a, name: "리드", status: "lead" }).refs[0].id;
@@ -215,32 +215,32 @@ describe("온톨로지 · 신호", () => {
 });
 
 describe("MCP", () => {
-  it("initialize → tools/list → tools/call(run_action) 흐름", () => {
+  it("initialize → tools/list → tools/call(run_action) 흐름", async () => {
     const { db, a, agent } = setup();
-    const init = handleMcp(db, agent, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } })!;
+    const init = (await handleMcp(db, agent, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } }))!;
     assert.equal((init.result as { protocolVersion: string }).protocolVersion, "2025-06-18");
-    assert.equal(handleMcp(db, agent, { jsonrpc: "2.0", method: "notifications/initialized" }), null);
+    assert.equal(await handleMcp(db, agent, { jsonrpc: "2.0", method: "notifications/initialized" }), null);
 
-    const list = handleMcp(db, agent, { jsonrpc: "2.0", id: 2, method: "tools/list" })!;
+    const list = (await handleMcp(db, agent, { jsonrpc: "2.0", id: 2, method: "tools/list" }))!;
     const names = (list.result as { tools: { name: string }[] }).tools.map((t) => t.name);
     assert.ok(names.includes("run_action") && names.includes("list_signals"));
 
-    const call = handleMcp(db, agent, {
+    const call = (await handleMcp(db, agent, {
       jsonrpc: "2.0", id: 3, method: "tools/call",
       params: { name: "run_action", arguments: { action: "task.create", params: { business_id: a, title: "MCP 업무" }, reason: "테스트" } },
-    })!;
+    }))!;
     const res = call.result as { isError: boolean; structuredContent: { status: string } };
     assert.equal(res.isError, false);
     assert.equal(res.structuredContent.status, "applied");
 
-    const bad = handleMcp(db, agent, { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "get_object", arguments: { type: "task", id: 999 } } })!;
+    const bad = (await handleMcp(db, agent, { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "get_object", arguments: { type: "task", id: 999 } } }))!;
     assert.equal((bad.result as { isError: boolean }).isError, true);
-    assert.equal(handleMcp(db, agent, { jsonrpc: "2.0", id: 5, method: "nope" })!.error!.code, -32601);
+    assert.equal((await handleMcp(db, agent, { jsonrpc: "2.0", id: 5, method: "nope" }))!.error!.code, -32601);
   });
 
-  it("list_actions 는 사람 전용 액션을 숨긴다", () => {
+  it("list_actions 는 사람 전용 액션을 숨긴다", async () => {
     const { db, agent } = setup();
-    const r = callTool(db, agent, "list_actions", {}) as { actions: { name: string }[] };
+    const r = await callTool(db, agent, "list_actions", {}) as { actions: { name: string }[] };
     const names = r.actions.map((x) => x.name);
     for (const hidden of ["agent.register", "agent.set_status", "system.set_ai_mode"]) assert.ok(!names.includes(hidden), hidden);
     assert.ok(names.includes("system.backup"));
@@ -317,7 +317,7 @@ describe("리뷰 반영 — 거버넌스 회귀 테스트", () => {
     assert.equal(run(agent, "client.update", { id: c, name: "  " }).status, "failed");
   });
 
-  it("음수 지출·초과 입금·다른 사업 고객 연결 거부", () => {
+  it("음수 지출·초과 입금·다른 사업 고객 연결 거부", async () => {
     const { a, b, agent, human, run } = setup();
     assert.throws(() => run(human, "expense.record", { business_id: a, description: "x", amount: "-5000" }), ActionError);
     const inv = run(human, "invoice.create", { business_id: a, items: [{ description: "x", unit_price: 1000 }] }).refs[0].id;
@@ -328,17 +328,17 @@ describe("리뷰 반영 — 거버넌스 회귀 테스트", () => {
     assert.equal(run(agent, "task.create", { business_id: a, title: "t", client_id: 999 }).status, "failed");
   });
 
-  it("다른 에이전트의 run 은 조회할 수 없다", () => {
+  it("다른 에이전트의 run 은 조회할 수 없다", async () => {
     const { db, a, agent, run } = setup();
     const r = run(agent, "task.create", { business_id: a, title: "t" });
     const other: Actor = { type: "agent", id: "999", name: "남" };
-    assert.throws(() => callTool(db, other, "get_run", { run_id: r.id }));
-    assert.equal((callTool(db, agent, "get_run", { run_id: r.id }) as { status: string }).status, "applied");
+    await assert.rejects(() => callTool(db, other, "get_run", { run_id: r.id }));
+    assert.equal((await callTool(db, agent, "get_run", { run_id: r.id }) as { status: string }).status, "applied");
   });
 
-  it("MCP: id 없는 tools/call 은 실행하지 않는다", () => {
+  it("MCP: id 없는 tools/call 은 실행하지 않는다", async () => {
     const { db, a, agent } = setup();
-    const res = handleMcp(db, agent, { jsonrpc: "2.0", method: "tools/call", params: { name: "run_action", arguments: { action: "task.create", params: { business_id: a, title: "몰래" }, reason: "x" } } });
+    const res = await handleMcp(db, agent, { jsonrpc: "2.0", method: "tools/call", params: { name: "run_action", arguments: { action: "task.create", params: { business_id: a, title: "몰래" }, reason: "x" } } });
     assert.equal(res, null);
     assert.equal(listRuns(db).length, 0);
   });

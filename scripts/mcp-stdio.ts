@@ -14,7 +14,8 @@ if (!auth.ok) {
 console.error(`[now-mcp] ${auth.actor.name} 로 연결 · DB ${dbPath()}`);
 
 const rl = readline.createInterface({ input: process.stdin });
-rl.on("line", (line) => {
+
+async function handleLine(line: string) {
   if (!line.trim()) return;
   let msg: JsonRpcRequest | JsonRpcRequest[];
   try {
@@ -26,14 +27,20 @@ rl.on("line", (line) => {
   // 요청마다 재인증 — 콘솔에서 정지·폐기하면 즉시 끊긴다
   const again = authenticate(db(), `Bearer ${process.env.NOW_AGENT_TOKEN ?? ""}`);
   const batch = Array.isArray(msg) ? msg : [msg];
-  const out = batch
-    .map((m) =>
-      again.ok
-        ? handleMcp(db(), again.actor, m)
-        : m.id === undefined
-          ? null
-          : { jsonrpc: "2.0" as const, id: m.id, error: { code: -32001, message: again.error } },
-    )
-    .filter((r) => r !== null);
+  const out = [];
+  for (const m of batch) {
+    const r = again.ok
+      ? await handleMcp(db(), again.actor, m)
+      : m.id === undefined
+        ? null
+        : { jsonrpc: "2.0" as const, id: m.id, error: { code: -32001, message: again.error } };
+    if (r !== null) out.push(r);
+  }
   if (out.length) process.stdout.write(JSON.stringify(Array.isArray(msg) ? out : out[0]) + "\n");
+}
+
+// 도구가 비동기(recall 의 질의 임베딩)여도 응답 순서가 요청 순서와 같도록 한 줄씩 차례로
+let chain = Promise.resolve();
+rl.on("line", (line) => {
+  chain = chain.then(() => handleLine(line)).catch((e) => console.error("[now-mcp]", e));
 });

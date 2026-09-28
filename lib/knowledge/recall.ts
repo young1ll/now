@@ -1,13 +1,18 @@
-// 하이브리드 회상(recall) — 어휘(FTS/LIKE) · 관계(그래프) · 직접 참조를 순위 융합(RRF)으로 합친다.
-// M2 에서 벡터 목록이 같은 자리에 하나 더 들어온다 (docs/MEMORY.md §5).
+// 하이브리드 회상(recall) — 어휘(FTS/LIKE) · 의미(벡터 KNN) · 관계(그래프) · 직접 참조를 순위 융합(RRF)으로 합친다
+// (docs/MEMORY.md §5). 벡터는 캐시다: 활성 공간이 없거나, 벡터가 꺼졌거나, 질의 임베딩이 실패하면
+// 의미 목록만 빠지고 어휘 + 관계로 그대로 동작한다 (실패는 degraded 로 알린다).
 import type { DB } from "@/lib/db";
 import { edgesOf, nodeInfo, parseRef } from "@/lib/ontology/graph";
 import { OBJECT_TYPES, type ObjectType, type Ref, refKey } from "@/lib/ontology/types";
+import { activeSpace } from "@/lib/repos/embeddings";
 import type { Scope } from "@/lib/repos/scope";
+import { embedQuery, outageUntil } from "./embedder";
 import { ensureIndexed } from "./indexer";
+import { attachVectors, knn, vectorStoreInfo, vectorsEnabled } from "./vectors";
 
-export type RecallMode = "hybrid" | "lexical";
-export type Why = "ref" | "lexical" | "graph" | "about";
+/** hybrid = 참조 + 어휘 + 의미 + 관계 (+ 주변) · lexical = 참조 + 어휘 · vector = 의미만 (평가용) */
+export type RecallMode = "hybrid" | "lexical" | "vector";
+export type Why = "ref" | "lexical" | "semantic" | "graph" | "about";
 
 export type RecallQuery = {
   query: string;
@@ -33,9 +38,26 @@ export type RecallHit = {
   snippet: string;
   /** 관계로 들어온 경우: 어느 결과에서 어떤 링크로 */
   via?: { from: string; label: string };
+  /** 의미 목록으로 들어온 경우: 가장 가까운 구획의 코사인 유사도 */
+  similarity?: number;
 };
 
-export type RecallResult = { hits: RecallHit[]; terms: string[]; tookMs: number };
+export type RecallResult = {
+  hits: RecallHit[];
+  terms: string[];
+  tookMs: number;
+  /** 의미 검색에 쓴 공간 (없으면 어휘 + 관계만) */
+  vector: { space: string; model: string } | null;
+  /** 의미 검색을 시도했지만 못 한 이유 (공급자 장애 등) — 결과는 어휘 + 관계 */
+  degraded?: string;
+};
+
+export type RecallOpts = {
+  fetchImpl?: typeof fetch;
+  env?: Record<string, string | undefined>;
+  /** 질의 임베딩 시간 제한 (기본 embedder.QUERY_TIMEOUT_MS — 요청 경로라 짧다) */
+  queryTimeoutMs?: number;
+};
 
 // ── 검색어 분석 ───────────────────────────────────────
 
@@ -210,6 +232,72 @@ function snippetOf(c: ChunkRow | undefined, terms: Term[], width = 140): string 
   return `…${flat.slice(start, start + width)}${start + width < flat.length ? "…" : ""}`;
 }
 
+// ── 의미 ─────────────────────────────────────────────
+
+/**
+ * 의미 목록에 넣을 최소 코사인 유사도. 공간(모델)마다 분포가 달라 절대값에 큰 뜻은 없다 — 명백한 잡음만 자른다.
+ * 평가(npm run eval:recall -- --embed-url …)로 조정한다.
+ */
+export const MIN_SEMANTIC = 0.25;
+/** 의미 검색의 최소 bit 후보 수 */
+const KNN_CANDIDATES = 200;
+
+/** score 는 순위용(유형 힌트로 가중될 수 있음), sim 은 원래 코사인 */
+type Semantic = { key: string; ref: Ref; score: number; sim: number; best: ChunkRow };
+type SemanticOut = { list: Semantic[]; vector: RecallResult["vector"]; degraded?: string };
+
+async function semantic(db: DB, query: string, scope: Scope | undefined, types: ObjectType[] | undefined, k: number, o: RecallOpts): Promise<SemanticOut> {
+  if (!vectorsEnabled(o.env)) return { list: [], vector: null };
+  const space = activeSpace(db);
+  if (!space) return { list: [], vector: null };
+  const vector = { space: space.name, model: space.model };
+  if (!attachVectors(db)) return { list: [], vector: null, degraded: vectorStoreInfo(db).error ?? "벡터 저장소를 열 수 없습니다" };
+  // 워커가 공급자 장애(연결 실패·시간 초과·5xx)를 확인해 백오프 중이면 묻지 않는다 — 검색마다 시간 초과를 기다리지 않게
+  const outage = outageUntil(db, space.id);
+  if (outage) return { list: [], vector, degraded: `임베딩 공급자 장애 — ${new Date(outage).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}까지 의미 검색을 건너뜁니다${space.last_error ? ` (${space.last_error})` : ""}` };
+  let q: Float32Array;
+  try {
+    q = await embedQuery(space, query, { fetchImpl: o.fetchImpl, env: o.env, timeoutMs: o.queryTimeoutMs });
+  } catch (e) {
+    return { list: [], vector, degraded: `질의 임베딩 실패 — ${e instanceof Error ? e.message : String(e)}` };
+  }
+  // 1차 bit 후보는 max(200, 2×요청 수) — vec0 의 top-k 선택 비용이 후보 수에 거의 비례한다
+  // (5만 × 1024차원: 후보 200 ≈ 14ms · 800 ≈ 70ms). 재정렬 후 앞쪽 순위만 RRF 에 의미가 있으므로 이 정도면 충분하다.
+  const want = Math.max(k * 4, 40);
+  let near: { hash: string; score: number }[];
+  let rows: (ChunkRow & { content_hash: string })[];
+  // 벡터 저장소 오류(손상된 파일·잠금·차원 불일치)도 검색 전체를 죽이지 않고 어휘 + 관계로 강등한다
+  try {
+    near = knn(db, space, q, want, { candidates: Math.max(KNN_CANDIDATES, want * 2) });
+    if (!near.length) return { list: [], vector };
+    const [sc, sp] = scopeSql(scope);
+    const hashes = near.map((n) => n.hash);
+    rows = db
+      .prepare(`SELECT id, owner_type, owner_id, business_id, seq, text, content_hash FROM chunks WHERE content_hash IN (${hashes.map(() => "?").join(",")})${sc}`)
+      .all(...hashes, ...sp) as (ChunkRow & { content_hash: string })[];
+  } catch (e) {
+    return { list: [], vector, degraded: `벡터 검색 실패 — ${e instanceof Error ? e.message : String(e)}` };
+  }
+  const sim = new Map(near.map((n) => [n.hash, n.score]));
+  const owners = new Map<string, Semantic>();
+  for (const c of rows) {
+    // 알 수 없는 소유자(합성·과거 데이터)는 결과가 될 수 없다
+    if (!KNOWN.has(c.owner_type) || (types && !types.includes(c.owner_type))) continue;
+    const score = sim.get(c.content_hash) ?? 0;
+    if (score < MIN_SEMANTIC) continue;
+    const key = `${c.owner_type}:${c.owner_id}`;
+    const cur = owners.get(key);
+    if (!cur || score > cur.score) owners.set(key, { key, ref: { type: c.owner_type, id: c.owner_id }, score, sim: score, best: c });
+  }
+  return { list: [...owners.values()].sort((a, b) => b.score - a.score || a.key.localeCompare(b.key)), vector };
+}
+
+/** 의미 검색을 일부러 건너뛴 경우에도 활성 공간은 알린다 (null 은 "활성 공간 없음"으로 읽힌다) */
+function skippedVector(db: DB, o: RecallOpts): RecallResult["vector"] {
+  const space = vectorsEnabled(o.env) ? activeSpace(db) : undefined;
+  return space ? { space: space.name, model: space.model } : null;
+}
+
 // ── 관계 ─────────────────────────────────────────────
 
 const EDGE_WEIGHT = { custom: 1, intrinsic: 0.6, derived: 0 } as const;
@@ -241,9 +329,18 @@ function graphExpand(db: DB, seeds: Ref[]): GraphCand[] {
 const RRF_K = 20;
 const TYPE_BOOST = 1.5;
 const MAX_GRAPH_ONLY = 3;
-const WEIGHT: Record<Why, number> = { ref: 3, lexical: 1, about: 0.7, graph: 0.5 };
+const WEIGHT: Record<Why, number> = { ref: 3, lexical: 1, semantic: 1, about: 0.7, graph: 0.5 };
 
-export function recall(db: DB, q: RecallQuery): RecallResult {
+/** 관계 확장의 씨앗: 참조 → 어휘·의미 상위를 번갈아 (각 목록의 순위를 유지하며 중복 제거) */
+function seedsOf(refs: Ref[], ...lists: { ref: Ref }[][]): Ref[] {
+  const out = new Map<string, Ref>();
+  for (const r of refs) out.set(refKey(r), r);
+  const n = Math.max(0, ...lists.map((l) => l.length));
+  for (let i = 0; i < n && out.size < GRAPH_SEEDS * 2; i++) for (const l of lists) if (l[i] && !out.has(refKey(l[i].ref))) out.set(refKey(l[i].ref), l[i].ref);
+  return [...out.values()];
+}
+
+export async function recall(db: DB, q: RecallQuery, o: RecallOpts = {}): Promise<RecallResult> {
   const t0 = performance.now();
   ensureIndexed(db);
   const k = Math.min(Math.max(q.k ?? 10, 1), 100);
@@ -252,14 +349,28 @@ export function recall(db: DB, q: RecallQuery): RecallResult {
   const hint = <T extends { ref: Ref; score: number; key: string }>(xs: T[]) =>
     typeHint ? xs.map((x) => (x.ref.type === typeHint ? { ...x, score: x.score * TYPE_BOOST } : x)).sort((a, b) => b.score - a.score || a.key.localeCompare(b.key)) : xs;
 
-  const lex = hint(lexical(db, terms, q.scope, q.types));
-  const lists: [Why, { key: string; ref: Ref }[]][] = [
-    ["ref", refs.map((r) => ({ key: refKey(r), ref: r }))],
-    ["lexical", lex],
-  ];
+  const lex = mode === "vector" ? [] : hint(lexical(db, terms, q.scope, q.types));
+  // 의미: 식별자만 있는 질의(CLT-0003)는 임베딩하지 않는다 — 그 밖에는 한 글자 질의(돈·차)나 불용어뿐인 질의도
+  // 임베딩한다 (어휘 검색어가 비어도 뜻은 있을 수 있다)
+  const idOnly = refs.length > 0 && !terms.length;
+  const sem: SemanticOut =
+    mode === "lexical" || !q.query.trim()
+      ? { list: [], vector: null }
+      : idOnly
+        ? { list: [], vector: skippedVector(db, o) }
+        : await semantic(db, q.query, q.scope, q.types, k, o);
+  const semList = hint(sem.list);
+  const lists: [Why, { key: string; ref: Ref }[]][] =
+    mode === "vector"
+      ? [["semantic", semList]]
+      : [
+          ["ref", refs.map((r) => ({ key: refKey(r), ref: r }))],
+          ["lexical", lex],
+        ];
   let graph: GraphCand[] = [];
   if (mode === "hybrid") {
-    graph = hint(graphExpand(db, [...refs, ...lex.map((l) => l.ref)]));
+    lists.push(["semantic", semList]);
+    graph = hint(graphExpand(db, seedsOf(refs, lex, semList)));
     lists.push(["graph", graph]);
     if (q.about) {
       const around = graphExpand(db, [q.about]);
@@ -281,6 +392,7 @@ export function recall(db: DB, q: RecallQuery): RecallResult {
   const ranked = [...fused.entries()].sort((a, b) => b[1].score - a[1].score || a[0].localeCompare(b[0]));
   const nodes = nodeInfo(db, ranked.slice(0, k * 4).map(([, v]) => v.ref));
   const lexMap = new Map(lex.map((l) => [l.key, l]));
+  const semMap = new Map(semList.map((x) => [x.key, x]));
   const graphMap = new Map(graph.map((g) => [g.key, g]));
   const card = db.prepare("SELECT * FROM chunks WHERE owner_type = ? AND owner_id = ? AND seq = 0");
   const hits: RecallHit[] = [];
@@ -294,8 +406,9 @@ export function recall(db: DB, q: RecallQuery): RecallResult {
     if (q.types && !q.types.includes(n.type)) continue;
     if (q.scope !== null && q.scope !== undefined && n.type !== "agent" && n.businessId !== null && n.businessId !== q.scope) continue;
     const l = lexMap.get(key);
+    const sm = semMap.get(key);
     const g = graphMap.get(key);
-    const viaNode = g && !l ? nodes.get(g.via.from) ?? nodeInfo(db, [parseRef(g.via.from)!]).get(g.via.from) : undefined;
+    const viaNode = g && !l && !sm ? nodes.get(g.via.from) ?? nodeInfo(db, [parseRef(g.via.from)!]).get(g.via.from) : undefined;
     hits.push({
       ref: v.ref,
       key,
@@ -306,9 +419,17 @@ export function recall(db: DB, q: RecallQuery): RecallResult {
       score: Math.round(v.score * 10_000) / 10_000,
       why: v.why,
       matched: l?.matched ?? [],
-      snippet: l ? snippetOf(l.best, terms) : snippetOf(card.get(v.ref.type, v.ref.id) as ChunkRow | undefined, []),
-      via: g && !l ? { from: viaNode ? `${viaNode.displayId} ${viaNode.title}` : g.via.from, label: g.via.label } : undefined,
+      // 어휘 일치가 없으면 의미상 가장 가까운 구획을 보여준다
+      snippet: l ? snippetOf(l.best, terms) : sm ? snippetOf(sm.best, terms) : snippetOf(card.get(v.ref.type, v.ref.id) as ChunkRow | undefined, []),
+      via: g && !l && !sm ? { from: viaNode ? `${viaNode.displayId} ${viaNode.title}` : g.via.from, label: g.via.label } : undefined,
+      similarity: sm ? Math.round(sm.sim * 1000) / 1000 : undefined,
     });
   }
-  return { hits, terms: terms.map((t) => t.text), tookMs: Math.round((performance.now() - t0) * 10) / 10 };
+  return {
+    hits,
+    terms: terms.map((t) => t.text),
+    tookMs: Math.round((performance.now() - t0) * 10) / 10,
+    vector: sem.vector,
+    ...(sem.degraded ? { degraded: sem.degraded } : {}),
+  };
 }

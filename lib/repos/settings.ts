@@ -20,6 +20,10 @@ export function setSetting(db: DB, key: string, value: string) {
   ).run(key, value);
 }
 
+export function deleteSetting(db: DB, key: string) {
+  db.prepare("DELETE FROM settings WHERE key = ?").run(key);
+}
+
 export function getAiMode(db: DB): AiMode {
   const v = getSetting(db, "ai_mode");
   return (AI_MODES as readonly string[]).includes(v ?? "") ? (v as AiMode) : "guarded";

@@ -12,7 +12,7 @@ export async function agentTool(req: Request, tool: string, args: (actor: Actor)
   const auth = authenticate(db(), req.headers.get("authorization"));
   if (!auth.ok) return json({ error: auth.error }, auth.status);
   try {
-    return json(callTool(db(), auth.actor, tool, await args(auth.actor)));
+    return json(await callTool(db(), auth.actor, tool, await args(auth.actor)));
   } catch (e) {
     if (e instanceof ToolError) return json({ error: e.message }, 400);
     throw e;

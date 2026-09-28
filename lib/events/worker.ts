@@ -5,7 +5,9 @@ import crypto from "node:crypto";
 import type { DB } from "@/lib/db";
 import { executeSession } from "@/lib/ai/runtime";
 import { today } from "@/lib/dates";
+import { embedPending } from "@/lib/knowledge/embedder";
 import { indexPending } from "@/lib/knowledge/indexer";
+import { gcVectors } from "@/lib/knowledge/vectors";
 import { computeSignals } from "@/lib/ontology/signals";
 import { createSession, getProfile, getSession } from "@/lib/repos/ai";
 import { type NowEvent, emitEvent, getEvent, lastEventId, listEvents, matchesPattern } from "@/lib/repos/events";
@@ -282,9 +284,9 @@ export async function executeQueued(db: DB, opts: WorkerOpts & { background?: bo
 }
 
 /** 한 번의 틱: 매칭은 매번, 신호·스케줄은 분 단위 */
-export async function tick(db: DB, opts: WorkerOpts & { signals?: boolean; schedules?: boolean; background?: boolean; index?: boolean } = {}) {
+export async function tick(db: DB, opts: WorkerOpts & { signals?: boolean; schedules?: boolean; background?: boolean; index?: boolean; embed?: boolean } = {}) {
   const now = opts.now ?? new Date();
-  const out = { signals: { raised: 0, resolved: 0 }, scheduled: 0, queued: 0, executed: 0, indexed: 0 };
+  const out = { signals: { raised: 0, resolved: 0 }, scheduled: 0, queued: 0, executed: 0, indexed: 0, embedded: 0 };
   // 커서를 먼저 확정해야 이번 틱에 새로 생긴 신호가 트리거에 전달된다
   out.queued = matchEvents(db, now);
   if (opts.signals !== false) out.signals = detectSignals(db, now);
@@ -296,9 +298,25 @@ export async function tick(db: DB, opts: WorkerOpts & { signals?: boolean; sched
   if (opts.index !== false) {
     // 검색 색인은 파생 데이터 — 실패해도 트리거 처리를 막지 않고 다음 틱에 다시 시도한다
     try {
-      out.indexed = indexPending(db, now).changed;
+      const r = indexPending(db, now);
+      out.indexed = r.changed;
+      // 시간당 전체 스윕 때 벡터도 정리 (사라진 청크 · 폐기된 공간)
+      if (r.mode === "sweep") gcVectors(db);
     } catch (e) {
       console.error("[now-worker] 색인 실패", e);
+    }
+  }
+  if (opts.embed !== false) {
+    // 임베딩도 파생 데이터 — 공급자 장애가 트리거 처리를 막지 않는다 (오류는 공간 행에 기록되고 백오프).
+    // 상주 루프(background)에서는 기다리지 않는다: 느린 로컬 모델이 다음 틱의 스케줄·신호 감지를 붙잡지 않게.
+    const job = embedPending(db, { fetchImpl: opts.fetchImpl, env: opts.env, now });
+    if (opts.background) job.catch((e) => console.error("[now-worker] 임베딩 실패", e));
+    else {
+      try {
+        out.embedded = (await job).embedded;
+      } catch (e) {
+        console.error("[now-worker] 임베딩 실패", e);
+      }
     }
   }
   return out;
