@@ -205,6 +205,8 @@ score = RRF(fts, vec, graph)
 
 `(agent, action)` 별로 최근 N건의 승인/거절/사후 정정 비율을 집계한다. 기억에 대해서는 **"proposed 가 verified 된 비율"**과 **"사람이 정정한 비율"**이 에이전트의 기억 신뢰도다. 임계를 넘으면 해당 에이전트의 `memory.propose` 는 `active` 로 바로 착지한다. 등급은 올라갈 때 사람 승인, 내려갈 때 자동.
 
+→ 구현: §15 (M5). `memory_scope` 는 두지 않았다 — 기억도 사업 범위(`business_scope`)를 따른다 (사업 없는 전역 기억은 모든 범위에서 보인다).
+
 ## 7. 벡터화 — 성능 설계
 
 ### 7.1 실측 (sqlite-vec 0.1.9, 이 개발 컨테이너, 768차원, k=20, 전수 스캔)
@@ -520,3 +522,75 @@ npm run eval:recall
 | 〃 | hybrid | 0.71 | 0.96 | 0.82 | 〃 |
 
 - 예시 데이터의 플레이북이 처음에는 "카페 온도 규모 기억" 질의를 어휘 모드 6위로 밀었다 (본문의 "기억에서 확인" 이 질의어 "기억"과 일치). 플레이북 문구를 바꿔 M3 수치로 되돌렸다 — 골든셋이 작아 문서 하나의 어휘에도 흔들린다는 신호다.
+
+## 15. M5 구현 기록 (v0.4) — 신뢰 사다리
+
+원칙: 권한은 **좁게 시작해 증거로 넓힌다.** 넓히는 것(자율 권한 부여 · 기억 등급 상승 · 범위 확대)은 항상 사람, 좁히는 것(회수 · 강등)은 워커도 자동으로. 모든 판단 근거는 감사 로그(`action_runs`)에서 계산한다 — 점수 테이블은 없다.
+
+### 무엇이 들어갔나
+
+| 위치 | 내용 |
+|---|---|
+| 마이그레이션 9 · 10 | `agents.role`(operator · curator · researcher · custom) · `allowed_actions`(쉼표 glob, 기본 `*`) · `business_scope`(NULL = 전체, 사업 삭제 시 NULL) · `memory_trust`(propose · active), `agent_grants`(액션 하나 · 부여자 · 만료 필수 · 회수 3열), `action_runs.flagged_at`/`flagged_by`/`flag_note`. 10: `signal_state.business_id`·`subject_type`·`subject_id`·`located` — `signal.resolved` 도 대상·사업을 싣는다 |
+| 정책 (`lib/ontology/policy.ts`) | `decide(db, actor, def, risk, input, target)` — 상태 → 사람 전용 → **허용 범위** → **사업 범위**(`businessesOf`) → AI 모드(frozen 거부 · supervised 승인(권한 무시) · autonomous 실행 · guarded: low 실행, high 는 유효 권한이 있으면 실행 `grantId`, 없으면 승인). `scopeDenial` 은 `approveRun` 도 쓴다(승인 시점 재검사). `reachOf` = 도구의 읽기 범위 |
+| `businessesOf` | `input.business_id` + 대상 객체 + `ref`·`ids`·`objref`·`refs` 필드의 객체(`nodeInfo` 의 사업) + 액션의 `scopeRefs`. 사업 없는 공용 객체는 세지 않는다. 대상이 사업이면 그 id |
+| `ActionDef.scopeRefs` | 필드로 보이지 않는 참조: `link.delete`(링크 양 끝) · `payment.delete`(입금의 청구서) · `business.create`(`"new_business"` — 사업 범위 에이전트는 불가) |
+| 실행 (`execute.ts`) | 자율 권한으로 실행되면 감사 결과 `data.grant_id`. 승인 시 에이전트의 허용·사업 범위가 줄었으면 `failed` "요청 이후 에이전트의 권한 범위가 바뀌어 실행하지 않았습니다 — …" |
+| 액션 (`actions/trust.ts`, 전부 사람 전용 · SYSTEM 가능) | `agent.configure`(역할 · 허용 · 범위, 오타 검사, "권한 확대" 요약) · `agent.grant`(high 또는 함수형 위험도만, 허용 범위 안만, 1~90일 기본 30, 유효 권한 있으면 연장) · `agent.revoke_grant` · `agent.set_memory_trust` · `run.flag`(적용된 에이전트 실행만) · `run.unflag`. `agent.register` 에 역할·허용·범위 |
+| 기억 착지 | `landingStatus`: 기억 등급 active · 비오염 · 근거 ≥ 2 → `active`, 아니면 `proposed`. `memory.propose` 결과 `data.landing` = 처음 착지 상태 |
+| 신뢰 지표 (`lib/ontology/trust.ts`) | `agentTrust(db, id, {days = 30})` → 액션별 `direct · approved · rejected · failed · denied · cancelled · pending · flagged · granted`, 승인률, 기억 `proposed · confirmed · rejected · corrected · autoActive · precision`. `approvalHistory`(승인함) · `autonomyStats`(오퍼레이션) |
+| 넓힐 후보 (`trustSuggestions` → `computeSignals` 전체 범위) | `trust.grant_candidate:<agent>:<action>` (info, suggested `agent.grant {agent_id, action, days: 30}`) · `trust.memory_candidate:<agent>` (info, suggested `agent.set_memory_trust {agent_id, level: active}`) |
+| 자동 강등 (`enforceTrust` · `maybeEnforceTrust`) | 워커 틱(분 단위)에서 시간당 1회(`settings.trust_last_run` 조건부 갱신 점유, `settings.trust = 'off'` 로 끔). SYSTEM `agent.revoke_grant` · `agent.set_memory_trust`, 뭔가 했으면 `trust.enforced` 이벤트 |
+| 읽기 범위 (`lib/agent/tools.ts`) | `callTool` 이 `business_id` 를 받는 도구의 기본값을 범위로, 다른 값은 `ToolError`. `get_object`(범위 밖 `ToolError`, 링크·가능 액션 필터, 범위 밖 객체에 닿은 이력은 통째로 제외) · `traverse`(시작 객체 검사 + 범위 밖 노드·간선 제거) · `find_path`(범위 밖을 지나는 경로는 found:false) · `recall` · `get_context`(팩 후보 필터 `allow`) · `list_signals` · `search_objects` · `list_episodes` · `list_memories`(about 검사) · `list_events` · SSE `/api/v1/events/stream`(주체 · `payload.refs` 전부 · `payload.business_id`, 범위를 모르는 `scope_unknown` 이벤트 제외 — `visibleEvents`) · `list_actions`(허용 범위만). AI 런타임 세션의 팩도 같은 범위 |
+| 새 도구 `whoami` | `{agent_id, name, role, allowed_actions, business_scope{id,name}, memory_trust, grants[{action, expires_at}], unusable_grants?(허용 범위 밖이 된 권한), ai_mode, trust_30d, summary}` — MCP 지침 · `describe_ontology.conventions.permissions` · `now whoami` |
+| 화면 | `/agents` 신뢰 카드(역할 · 범위 · 허용 칩 · 기억 등급 Tag · 30일 지표 · 액션별 표 · 유효/만료/회수 권한 + 회수 버튼 · 후보 원클릭 부여 · 설정/자율 권한/기억 등급 드로어), 등록 표에 역할·범위·허용. 에이전트 객체 화면에 같은 패널. 활동 상세: 에이전트의 적용 실행에 "문제 표시"(run.flag 드로어) · 표시 해제 · 자율 권한 정보. 활동 목록: "자율"·"문제" 배지, 상태 필터 "문제 표시". 오퍼레이션: "자율도 · 7일" 한 줄. 승인 카드: "이 에이전트의 이 액션 (30일): 승인 이력 n건 · 거절 m건" |
+| 예시 데이터 | 운영 에이전트(operator · `*`) + `task.delete` 자율 권한 30일, 리서치 에이전트(researcher · `note.*,memory.propose`), 큐레이터 프로필의 에이전트(`ai_profile.create` 뒤 `agent.configure` → curator · `memory.propose,memory.merge,memory.retire`) |
+
+### 임계값
+
+| 규칙 | 조건 |
+|---|---|
+| 자율 권한 후보 | 에이전트의 고위험(`risk = 'high'` 로 기록된) 액션 X — 최근 30일 사람 승인 ≥ 10 · 거절 0 · 문제 표시 0 · 유효 권한 없음 · 부여 가능(알려진 액션 · 사람 전용 아님 · 위험도 high/함수형) · 지금 허용 범위 안(밖이면 `agent.grant` 가 거부하므로 제안하지 않는다) |
+| 기억 등급 후보 | memory_trust = propose · 최근 30일 결정된 기억(확인 + 거절 + 정정) ≥ 20 · 정밀도 ≥ 0.9 |
+| 자율 권한 자동 회수 | 유효 권한의 (에이전트, 액션) 실행 중 `flagged_at ≥ granted_at` 인 것이 있음 → reason "문제 표시된 실행 RUN-… — 자동 회수" |
+| 기억 등급 자동 강등 | memory_trust = active · 최근 14일(또는 마지막 승급 이후 — 더 늦은 쪽)에 활성으로 착지한 기억 중 사람이 거절·정정한 것 ≥ 2 |
+| 활성 착지 | memory_trust = active · 비오염 · 근거 ≥ 2 (정정 `memory.correct` 의 새 기억은 여전히 proposed) |
+
+기억 결과의 판정 (감사 로그에서): 확인 = 사람의 `memory.confirm` · `memory.resolve`(남김 · both) · 같은 문장의 사람 기록(중복 보강 → verified) / 거절 = `memory.reject` · `memory.resolve`(버림) / 정정 = 사람의 `memory.correct`. 한 기억에 결정이 여럿이면 마지막 것.
+
+### 설계에서 바뀐 것
+
+- **`scopeRefs` 를 액션 정의에 더했다.** 명세의 `businessesOf` 는 필드 정의로 참조를 찾는데, `link.delete {link_id}` · `payment.delete {payment_id}` 는 숫자 id 라 사업을 알 수 없다 — 그대로면 범위가 있는 에이전트가 다른 사업의 링크·입금을 지울 수 있다. 액션이 스스로 밝히게 했다. `business.create` 는 새 사업이라 어떤 범위에도 들지 않으므로 거부(`"new_business"`).
+- **`grant_id` 는 `result.data` 에** (reason 뒤가 아니라). 사람이 쓴 근거 문장을 건드리지 않고, 지표는 `json_extract(result, '$.data.grant_id')` 로 센다. 데이터가 객체가 아니면 `{value, grant_id}` 로 감싼다. 사람의 `agent.grant` 결과에도 `grant_id` 가 있으므로 "자율 실행" 판정(`grantIdOf`)은 에이전트 실행에서만.
+- **`agent.grant` 는 허용 범위 안의 액션만.** 허용 범위 밖이면 정책이 먼저 거부해 권한이 쓸모없고, 나중에 범위를 넓힐 때 숨은 권한이 같이 살아나는 것을 막는다. 사람 전용 액션도 거부. 연장은 `max(현재 만료, 지금 + days)` — 만료된 권한은 연장하지 않고 새 행(이력 보존).
+- **역할별 기본 허용 범위.** `agent.register` 에서 허용 액션을 생략하면 역할의 기본값: operator · custom `*`, curator `memory.propose,memory.merge,memory.retire`, researcher `note.*,memory.propose`. `agent.configure` 의 역할 변경은 허용 범위를 바꾸지 않는다(표시만 — 권한 변경은 항상 명시적으로).
+- **"권한 확대" 판정** = 새 허용 범위가 이전에 허용되지 않던(사람 전용 아닌) 액션을 하나라도 허용하거나, 사업 범위가 특정 사업에서 전체·다른 사업으로 바뀜. 결과 `data.widened` · `new_actions`. 빈 허용 범위는 거부(쓰기를 모두 막으려면 정지), 바뀐 것이 없으면 거부.
+- **위험도**: `agent.configure` · `agent.grant` · `agent.set_memory_trust` 는 high (기존 에이전트 관리 액션과 같이), 좁히는 `agent.revoke_grant` · `run.flag` · `run.unflag` 는 low. 전부 사람 전용이라 위험도는 표시용이다.
+- **강등 기간은 "마지막 승급 이후"로 자른다.** 명세의 "최근 14일" 만 쓰면, 거절 2건으로 강등된 에이전트를 사람이 다시 올린 직후 같은 거절 2건으로 한 시간 안에 다시 강등된다. 승급 시각은 `agent.set_memory_trust level=active` 의 적용 run 에서 찾는다.
+- **자동 회수는 권한으로 실행된 run 에 한정하지 않는다.** 명세대로 "유효 권한이 있는 액션의 run 이 권한 부여 이후 flagged" — 권한 이전의 (승인받은) 실행이라도 부여 이후 문제로 표시되면 회수한다. 해제(`run.unflag`)해도 회수된 권한은 되살아나지 않는다 (다시 부여).
+- **`trust.enforced` 는 뭔가 했을 때만.** 매시간 빈 이벤트가 `*` 패턴 트리거를 깨우지 않게. 시간당 1회 점유는 큐레이터와 같은 방식.
+- **넓힐 후보 신호는 전체 범위에서만** (시스템 신호처럼). 사업 범위 화면·에이전트의 `list_signals` 에는 나오지 않는다. 기억 후보는 30일 안에 제안이 20건 이상인 에이전트만 결정까지 따라간다 (신호는 분마다·화면마다 계산된다).
+- **읽기 범위는 명세의 도구 목록보다 넓다**: `list_events` · SSE 스트림(주체·페이로드 사업) · `list_memories`(about 검사) · `get_object` 의 링크·이력 객체·가능 액션도 거른다. AI 런타임의 세션 팩도 프로필 에이전트의 범위로 거르고, 트리거 대상이 범위 밖이면 대상 없이 만든다. `find_path` 는 범위 밖 객체를 지나는 경로를 "없음"으로 — 경로 자체가 범위 밖 관계를 드러내기 때문(범위 안의 다른 경로가 있어도 최단 경로가 범위 밖을 지나면 놓친다).
+- **`run.flag` 의 refs** = 에이전트 + 원래 실행의 객체 — 문제 표시가 에이전트 화면과 그 객체의 변경 이력에 함께 보인다.
+- **리뷰 반영 (M5 후속)**:
+  - 사업 범위 에이전트의 이벤트 필터는 주체만이 아니라 `payload.refs` 전부를 본다 — `run.flag` 처럼 주체가 공용 객체(에이전트)여도 범위 밖 실행의 요약·메모가 새지 않게. `get_object` 이력도 범위 밖 객체에 닿은 실행은 통째로 뺀다.
+  - `signal.resolved` 는 `signal_state` 에 기록한 대상·사업(마이그레이션 10)을 싣는다. 위치를 기록하기 전의 행이 해소되면 `scope_unknown: true` — 범위 에이전트에게는 빠진다.
+  - 사업 범위 거부 사유에는 에이전트 자신의 범위 이름만 — 범위 밖 사업의 이름을 알려 주면 임의 id 의 소속을 캐는 통로가 된다. 사람은 run 의 입력·대상으로 확인한다.
+  - IaC 스냅샷 수신(`POST /api/v1/iac/snapshots`)은 액션 레지스트리 밖 쓰기라 `NON_ACTION_WRITES`(`iac.record_snapshot`)로 허용 범위에 넣었다 — 허용 범위 밖이면 403 + denied run. `agent.configure` 의 오타 검사도 이 이름을 안다.
+  - 허용 범위를 좁혀도 권한 행은 남는다(다시 넓히면 살아난다). `whoami` 는 쓸 수 있는 권한만 `grants` 에, 나머지는 `unusable_grants` 에, 신뢰 패널은 "허용 범위 밖" 태그. 패널은 유효 권한을 전부 먼저, 회수·만료 이력은 최근 6개만(`grantsOverview`).
+  - 에이전트에게 돌려주는 실행 기록(`runOut`)에 `grant_id` · `flagged{at, by, note}`, `list_my_runs` 에 `flagged` 필터.
+- **`memory_scope` 는 없다** (설계 §6.1). 기억도 `business_scope` 로 충분했다 — 기억의 사업은 대상에서 추론되고, 전역 기억은 공용 객체로 통과한다.
+- **승인함 이력은 최근 30일** (후보 기준과 같은 창), 문제 표시 수도 함께. 자율도의 분모는 바로 적용 + 자율 + 승인 후 적용 + 거절 (실패·거부·대기·철회 제외).
+
+### 측정 (이 개발 컨테이너)
+
+```bash
+npm run eval:recall
+```
+
+| 조건 | 모드 | R@1 | R@5 | MRR |
+|---|---|---|---|---|
+| 예시 데이터(+역할·범위·자율 권한), 공간 없음 · 골든셋 28건 | lexical | 0.71 | 0.96 | 0.82 |
+| 〃 | hybrid | 0.71 | 0.96 | 0.82 |
+
+M4 와 같다 — 예시 데이터에 추가된 것(에이전트 설정 · 권한)은 색인 대상이 아니다.

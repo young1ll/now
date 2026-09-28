@@ -7,6 +7,8 @@ import type { DB } from "@/lib/db";
 import { INSTRUCTIONS } from "@/lib/agent/mcp";
 import { TOOLS, ToolError, callTool, toolJsonSchema } from "@/lib/agent/tools";
 import { type ContextPack, buildContext } from "@/lib/knowledge/context";
+import { nodeInfo } from "@/lib/ontology/graph";
+import { reachOf } from "@/lib/ontology/policy";
 import { type Actor, OBJECT_TYPES, type ObjectType, type Ref, refKey } from "@/lib/ontology/types";
 import { getAgent } from "@/lib/repos/agents";
 import {
@@ -43,7 +45,12 @@ export function sessionSubject(db: DB, s: Pick<AgentSession, "trigger_run_id">):
 async function sessionContext(db: DB, s: AgentSession, opts: RunOpts): Promise<ContextPack | undefined> {
   try {
     const about = sessionSubject(db, s);
-    const pack = await buildContext(db, { about: about ? [about] : [], task: s.prompt.slice(0, 500), fetchImpl: opts.fetchImpl, env: opts.env });
+    // 사업 범위가 있는 에이전트의 팩은 그 사업(과 공용) 항목만 — 도구의 읽기 범위와 같다
+    const agentId = getProfile(db, s.profile_id)?.agent_id;
+    const reach = agentId ? reachOf(db, { type: "agent", id: String(agentId), name: "" }) : undefined;
+    const scoped = reach && reach.scope !== null ? { scope: reach.scope, allow: reach.seesBusiness } : {};
+    const subject = about && reach && reach.scope !== null && !reach.seesBusiness(nodeInfo(db, [about]).get(refKey(about))?.businessId) ? undefined : about;
+    const pack = await buildContext(db, { about: subject ? [subject] : [], task: s.prompt.slice(0, 500), fetchImpl: opts.fetchImpl, env: opts.env, ...scoped });
     saveSessionContext(db, s.id, pack.items.length ? pack.hash : null, pack.items.map((i) => refKey(i.ref)));
     return pack;
   } catch (e) {

@@ -6,7 +6,7 @@ import { executeAction } from "@/lib/ontology/execute";
 import { type Actor, OPERATOR } from "@/lib/ontology/types";
 import { insertSnapshot } from "@/lib/repos/snapshots";
 
-/** 큐레이터 에이전트의 역할 (허용 범위 제한은 M5 — 지금은 이 지시로만) */
+/** 큐레이터 에이전트의 역할 지시 — 허용 범위(memory.propose · merge · retire)는 agent.configure 로 강제된다 (M5) */
 export const CURATOR_PROMPT = `역할: 기억 정리(큐레이터). 지난 AI 세션의 에피소드와 기존 기억을 읽고, 반복해서 쓸 만한 것만 기억으로 제안한다.
 1. list_episodes 로 에피소드를 읽는다 (전문은 get_object type note).
 2. 후보마다 recall(types ["memory"]) 로 같은 뜻의 기억이 이미 있는지 확인한다 — 있으면 제안하지 않는다.
@@ -45,7 +45,8 @@ export function seedDemo(d: DB, o: { embeddingSpace?: boolean } = {}): string {
     const reg = H("agent.register", { name: "Claude · 운영 에이전트", description: "신호 처리, 고객 후속 조치, 청구·정산 준비" });
     token = String(reg.out?.token);
     agent = { type: "agent", id: String(reg.refs[0].id), name: "Claude · 운영 에이전트" };
-    H("agent.register", { name: "Claude · 리서치", description: "세법·시장 리서치 문서화" });
+    // 리서치 에이전트: 문서와 기억 제안만 (사업 범위 없음 — 두 사업 모두 조사)
+    H("agent.register", { name: "Claude · 리서치", description: "세법·시장 리서치 문서화", role: "researcher", allowed_actions: "note.*,memory.propose" });
 
     const hanbit = id(H("client.create", { business_id: tax, name: "한빛상사", status: "active", tags: "법인, 기장", email: "cfo@hanbit.example" }));
     const kim = id(H("client.create", { business_id: tax, name: "김민수", kind: "person", status: "active", tags: "개인, 양도세" }));
@@ -144,12 +145,15 @@ export function seedDemo(d: DB, o: { embeddingSpace?: boolean } = {}): string {
     });
 
     // ── 큐레이터: 매일 밤 에피소드에서 기억을 추출한다 (결정적 정리 — 만료·중복·승격 후보 — 는 워커가 시간마다) ──
-    const curator = H("ai_profile.create", {
+    const curatorRun = H("ai_profile.create", {
       name: "큐레이터 (기억 정리)",
       provider: "anthropic",
       max_steps: 16,
       system_prompt: CURATOR_PROMPT,
-    }).result!.data as { profile_id: number };
+    });
+    const curator = curatorRun.result!.data as { profile_id: number };
+    // 프로필이 만든 에이전트 신원을 큐레이터 역할로 좁힌다 — 기억 제안·합치기·보관 밖의 쓰기는 정책이 거부한다
+    H("agent.configure", { id: id(curatorRun, "agent"), role: "curator", allowed_actions: "memory.propose,memory.merge,memory.retire" });
     H("trigger.create", {
       name: "야간 기억 정리",
       kind: "schedule",
@@ -158,6 +162,9 @@ export function seedDemo(d: DB, o: { embeddingSpace?: boolean } = {}): string {
       profile_id: curator.profile_id,
       prompt_template: "지난 실행 이후 에피소드: list_episodes(since={{trigger.last_fired_at}}) 로 읽고 기억을 정리하라.",
     });
+
+    // ── 신뢰 사다리: 운영 에이전트에 자율 권한 하나 (가드 모드에서 업무 삭제는 승인 없이 — 30일 뒤 만료, 문제 표시되면 자동 회수) ──
+    H("agent.grant", { agent_id: Number(agent.id), action: "task.delete", days: 30 });
   })();
 
   // 최근 24시간에 에이전트 활동이 분포하도록 시각을 흩뜨린다 (예시 데이터 전용)

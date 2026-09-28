@@ -13,6 +13,7 @@ AI 가 운영하고 사람이 관망·개입하는 1인 사업 운영 체제. Ne
   - 에이전트: MCP `run_action` / REST `POST /api/v1/actions/{name}`
 - 위험도: 외부로 나감·삭제·금액 기록 = `high`. 상태에 따라 다르면 함수로. 에이전트가 하면 안 되는 것 = `humanOnly`.
 - 새 객체 유형은 `lib/ontology/objects.ts` 에 등록 (list/get/columns/actions/actionsFor).
+- 에이전트 권한 = `allowed_actions`(glob) · `business_scope` · `agent_grants` (`lib/ontology/policy.ts` · `trust.ts`, 판단 근거는 `action_runs` 에서 계산). 넓히는 액션은 `humanOnly`, 좁히기만 SYSTEM. 필드로 드러나지 않는 참조(숫자 id 등)를 가진 액션은 `scopeRefs` 로 닿는 사업을 밝힌다.
 - 읽기는 `lib/repos/*` (첫 인자 `db: DB`). 화면은 서버 컴포넌트에서 `db()` 로 호출.
 - Next 16: `params`·`searchParams`·`cookies()`·`headers()` 는 Promise. `"use server"` 파일은 async 함수만 export.
 

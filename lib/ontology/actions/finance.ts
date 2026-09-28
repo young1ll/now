@@ -182,6 +182,11 @@ export const financeActions = [
     objectType: "invoice",
     risk: "high",
     fields: { payment_id: f.number("입금 id", { required: true, int: true, min: 1 }) },
+    // 사업 범위 판정: 입금이 속한 청구서
+    scopeRefs: (db, i) => {
+      const inv = db.prepare("SELECT invoice_id FROM payments WHERE id = ?").pluck().get(i.payment_id) as number | undefined;
+      return inv ? [{ type: "invoice", id: inv }] : [];
+    },
     preview: (db, i) => {
       const p = db.prepare("SELECT invoice_id, amount FROM payments WHERE id = ?").get(i.payment_id) as { invoice_id: number; amount: number } | undefined;
       return p ? `${invoiceLabel(db, p.invoice_id)} 입금 기록 삭제` : `입금 ${i.payment_id} 삭제`;

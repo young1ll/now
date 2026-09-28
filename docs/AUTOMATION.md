@@ -15,6 +15,7 @@
 | `action.applied` · `action.pending` · `action.rejected` · `action.failed` · `action.denied` · `action.cancelled` | 모든 액션 실행과 승인 결정 (`action_runs` 기록 시) |
 | `signal.raised` · `signal.escalated` · `signal.resolved` | 워커가 1분마다 신호를 계산해 변화만 발행 |
 | `schedule.fired` · `manual.fired` | 스케줄 트리거 · 수동 실행 |
+| `trust.enforced` | 신뢰 사다리 자동 강등(워커, 시간당 1회)이 뭔가 했을 때 — payload: `revoked`(회수한 자율 권한 · 원인 실행) · `demoted`(기억 등급을 내린 에이전트) · `runs`(SYSTEM 액션 run) |
 | `curator.ran` | 큐레이터(결정적 정리)가 한 번 돌 때마다 — payload: 규칙별 처리 수 (`expired_unused` · `expired_valid_to` · `merged` · `merge_skipped` · `merge_disabled` · `promotable` · `errors`) |
 
 payload 는 요약·근거·대상 객체를 담는다 (토큰·비밀값 없음).
@@ -25,7 +26,7 @@ payload 는 요약·근거·대상 객체를 담는다 (토큰·비밀값 없음
 - 여러 프로세스가 동시에 돌아도 커서 전진·실행 점유가 트랜잭션/조건부 UPDATE 라 한 번만 처리된다.
 - 처음 켜질 때 과거 이벤트는 재생하지 않는다.
 - 간격: `NOW_WORKER_INTERVAL_MS` (기본 5000). 시간대: 서버 `TZ`.
-- 틱 순서: 이벤트 매칭 → 신호 감지 → 스케줄 → 실행 → **에피소드 기록** → 색인 → 임베딩 → **큐레이터**(시간당 1회, 분 단위 틱에서만). `--once` 출력에 `episodes` · `curated`.
+- 틱 순서: 이벤트 매칭 → 신호 감지 → 스케줄 → 실행 → **에피소드 기록** → 색인 → 임베딩 → **신뢰 강등**(`enforceTrust` — 시간당 1회, `settings.trust = 'off'` 로 끔) → **큐레이터**(시간당 1회, 분 단위 틱에서만). `--once` 출력에 `episodes` · `trust` · `curated`.
 
 ### 에피소드 (M4)
 
@@ -53,7 +54,7 @@ payload 는 요약·근거·대상 객체를 담는다 (토큰·비밀값 없음
 ### 큐레이터 (M4)
 
 - **결정적 정리** `curate()` (`lib/knowledge/curator.ts`) — 워커가 시간당 1회 (`settings.curator_last_run` 조건부 갱신으로 점유, `settings.curator = 'off'` 로 끔). 규칙과 처리는 [MEMORY.md §14](MEMORY.md#14-m4-구현-기록-v04) 표. 모든 변경은 `SYSTEM` 행위자의 `memory.retire` · `memory.merge` 로 감사에 남고, 끝나면 `curator.ran`.
-- **LLM 큐레이터** — 예시 데이터의 AI 프로필 "큐레이터 (기억 정리)" + 스케줄 트리거 "야간 기억 정리"(`10 3 * * *`): `list_episodes(since={{trigger.last_fired_at}})` 로 에피소드를 읽고 반복해서 쓸 만한 것만 `remember` 로 제안 → 승인함 "기억 검토". 큐레이터의 허용 범위(기억 액션만) 제한은 M5 — 지금은 시스템 프롬프트로만.
+- **LLM 큐레이터** — 예시 데이터의 AI 프로필 "큐레이터 (기억 정리)" + 스케줄 트리거 "야간 기억 정리"(`10 3 * * *`): `list_episodes(since={{trigger.last_fired_at}})` 로 에피소드를 읽고 반복해서 쓸 만한 것만 `remember` 로 제안 → 승인함 "기억 검토". 큐레이터 프로필의 에이전트는 `agent.configure` 로 역할 curator · 허용 `memory.propose,memory.merge,memory.retire` — 그 밖의 쓰기는 정책이 거부한다 (M5).
 
 ## 트리거
 

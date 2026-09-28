@@ -25,7 +25,7 @@ switch (cmd) {
   }
   case "list":
     for (const a of listAgents(d, new Date(Date.now() - 86_400_000).toISOString())) {
-      console.log(`${a.id}\t${a.status}\t${a.token_prefix}…\t${a.name}\t24h 실행 ${a.runs_24h}`);
+      console.log(`${a.id}\t${a.status}\t${a.token_prefix}…\t${a.name}\t${a.role} · 허용 ${a.allowed_actions} · 범위 ${a.business_scope_name ?? "전체"} · 기억 ${a.memory_trust}\t24h 실행 ${a.runs_24h}`);
     }
     break;
   case "suspend":

@@ -18,6 +18,10 @@ export type Run = {
   decided_at: string | null;
   decided_by: string | null;
   decision_note: string;
+  /** 사람이 "이 실행은 문제였다"고 표시 (run.flag) — 신뢰 지표·자율 권한 자동 회수에 쓰인다 */
+  flagged_at: string | null;
+  flagged_by: string | null;
+  flag_note: string | null;
 };
 
 export type RunResult = { summary: string; refs: Ref[]; data?: unknown };
@@ -131,6 +135,8 @@ export type RunFilter = {
   object?: { type: ObjectType; id: number };
   since?: string;
   beforeId?: number;
+  /** 문제 표시(flag)된 실행만 */
+  flagged?: boolean;
   limit?: number;
 };
 
@@ -147,6 +153,7 @@ export function listRuns(db: DB, f: RunFilter = {}): RunView[] {
   if (f.action) add("r.action = ?", f.action);
   if (f.since) add("r.created_at >= ?", f.since);
   if (f.beforeId) add("r.id < ?", f.beforeId);
+  if (f.flagged) add("r.flagged_at IS NOT NULL");
   if (f.object)
     add(
       "r.id IN (SELECT run_id FROM action_run_refs WHERE object_type = ? AND object_id = ?)",
@@ -176,6 +183,20 @@ export function runStats(db: DB, since: string): RunStats {
     if (r.actor_type === "human") s.human += r.n;
   }
   return s;
+}
+
+/** 문제 표시 / 해제 (run.flag · run.unflag 액션 전용). 이벤트는 그 액션의 run 이 낸다 */
+export function setRunFlag(db: DB, id: number, flag: { by: string; note: string; at?: string } | null) {
+  if (flag) db.prepare("UPDATE action_runs SET flagged_at = ?, flagged_by = ?, flag_note = ? WHERE id = ?").run(flag.at ?? new Date().toISOString(), flag.by, flag.note, id);
+  else db.prepare("UPDATE action_runs SET flagged_at = NULL, flagged_by = NULL, flag_note = NULL WHERE id = ?").run(id);
+}
+
+/** 자율 권한으로 적용된 에이전트 실행의 권한 id (execute.ts 가 result.data.grant_id 에 남긴다 — 사람의 agent.grant 결과의 grant_id 와 구별) */
+export function grantIdOf(r: Pick<RunView, "result" | "actor_type">): number | null {
+  if (r.actor_type !== "agent") return null;
+  const d = r.result?.data;
+  const g = d && typeof d === "object" ? (d as { grant_id?: unknown }).grant_id : undefined;
+  return typeof g === "number" ? g : null;
 }
 
 export function pendingCount(db: DB): number {

@@ -6,7 +6,7 @@ import { type AnyAction, resolveRisk, targetRef } from "./action";
 import { ACTIONS } from "./actions";
 import { formatZodError } from "./fields";
 import { getObject } from "./objects";
-import { decide } from "./policy";
+import { decide, scopeDenial } from "./policy";
 import { getAgent } from "@/lib/repos/agents";
 import { redactSecrets } from "@/lib/knowledge/redact";
 import { ActionError, type Actor, type Ref } from "./types";
@@ -62,6 +62,12 @@ function apply(db: DB, def: AnyAction, actor: Actor, input: Record<string, unkno
 
 export type ExecuteResult = RunView & { out?: Record<string, unknown> };
 
+function withGrant(data: unknown, grantId: number): unknown {
+  if (data === undefined || data === null) return { grant_id: grantId };
+  if (typeof data === "object" && !Array.isArray(data)) return { ...(data as Record<string, unknown>), grant_id: grantId };
+  return { value: data, grant_id: grantId };
+}
+
 /**
  * 모든 쓰기의 단일 관문. 검증 → 위험도 → 정책 → 실행/승인대기/거부 → 감사 기록.
  *
@@ -99,7 +105,7 @@ export function executeAction(db: DB, req: ExecuteRequest): ExecuteResult {
   }
   const stored = def.redact?.length && def.humanOnly ? Object.fromEntries(Object.entries(input).map(([k, v]) => [k, def.redact!.includes(k) && v ? "[redacted]" : v])) : input;
   const base = { action: def.name, actor, risk, params: stored, reason: req.reason, refs: target ? [target] : [] };
-  const decision = decide(db, actor, def, risk);
+  const decision = decide(db, actor, def, risk, input, target);
 
   if (decision.kind === "deny") return record({ ...base, status: "denied", error: decision.why });
   if (decision.kind === "approval") {
@@ -110,7 +116,9 @@ export function executeAction(db: DB, req: ExecuteRequest): ExecuteResult {
   try {
     const out: Record<string, unknown> = {};
     const result = apply(db, def, actor, input, out);
-    return { ...record({ ...base, status: "applied", result }), out };
+    // 자율 권한으로 실행됐으면 어느 권한인지 감사 결과에 남긴다 (신뢰 지표 · 자동 회수의 근거)
+    const recorded = decision.grantId ? { ...result, data: withGrant(result.data, decision.grantId) } : result;
+    return { ...record({ ...base, status: "applied", result: recorded }), out };
   } catch (e) {
     if (!isAgent && e instanceof ActionError) throw e;
     const run = record({ ...base, status: "failed", error: e instanceof Error ? e.message : String(e) });
@@ -131,12 +139,22 @@ export function approveRun(db: DB, runId: number, human: Actor, note = ""): RunV
     completeRun(db, runId, { status: "failed", error: why, decided_by: human.name, decision_note: note });
     return getRun(db, runId)!;
   };
-  if (actor.type === "agent" && getAgent(db, Number(actor.id))?.status !== "active") {
+  const agent = actor.type === "agent" ? getAgent(db, Number(actor.id)) : undefined;
+  if (actor.type === "agent" && agent?.status !== "active") {
     return refuse("요청한 에이전트가 정지·폐기되어 실행하지 않았습니다");
   }
   if (isStale(db, run)) return refuse("요청 이후 대상 객체가 변경되어 실행하지 않았습니다 — 다시 요청해야 합니다");
+  let input: Record<string, unknown>;
   try {
-    const result = apply(db, def, actor, parse(def, run.params));
+    input = parse(def, run.params);
+  } catch (e) {
+    return refuse(e instanceof Error ? e.message : String(e));
+  }
+  // 정책은 다시 보지 않는다(사람의 승인이 곧 결정) — 단, 요청 이후 에이전트의 허용 범위·사업 범위가 줄었으면 실행하지 않는다
+  const lost = agent ? scopeDenial(db, agent, def, input, targetRef(def, input)) : null;
+  if (lost) return refuse(`요청 이후 에이전트의 권한 범위가 바뀌어 실행하지 않았습니다 — ${lost}`);
+  try {
+    const result = apply(db, def, actor, input);
     completeRun(db, runId, { status: "applied", result, decided_by: human.name, decision_note: note });
   } catch (e) {
     completeRun(db, runId, { status: "failed", error: e instanceof Error ? e.message : String(e), decided_by: human.name, decision_note: note });

@@ -14,9 +14,10 @@
 lib/ontology/
   types.ts        ObjectType · Actor(human/agent/system) · ActionError
   fields.ts       필드 DSL: f.text / f.money / f.ref / f.items … → zod + UI 명세
-  action.ts       defineAction(): name, risk(정적/동적), humanOnly, target, prefill, preview, run
+  action.ts       defineAction(): name, risk(정적/동적), humanOnly, target, scopeRefs, prefill, preview, run
   actions/*.ts    액션 카탈로그 (사업·고객·업무·청구·입금·지출·문서·에이전트·시스템)
-  policy.ts       decide(actor, action, risk, AI 모드) → execute | approval | deny
+  policy.ts       decide(actor, action, risk, input, target) → execute(grantId?) | approval | deny — 허용 범위 · 사업 범위(businessesOf) · AI 모드 · 자율 권한
+  trust.ts        신뢰 사다리: agentTrust(액션별 결과 · 승인률 · 기억 정밀도) · trustSuggestions(넓힐 후보 신호) · enforceTrust(자동 회수·강등)
   execute.ts      executeAction · approveRun · rejectRun · cancelRun (+ 감사 기록)
   objects.ts      객체 유형: list/get/속성/연결/상태별 액션(actionsFor)
   signals.ts      computeSignals → 심각도·근거·제안 액션(파라미터 포함)
@@ -32,7 +33,7 @@ lib/knowledge/    검색 색인(파생): 객체 카드·문서 구획 → chunks
 lib/ai/           AI 런타임: 공급자 어댑터 (Anthropic SDK · OpenAI 호환 · Gemini) + 세션 실행 + 로컬 CLI
 lib/agent/
   auth.ts         Bearer 토큰 → 에이전트 행위자 (정지·폐기 거부)
-  tools.ts        에이전트 도구 14종 (MCP·REST·CLI 공용)
+  tools.ts        에이전트 도구 (MCP·REST·CLI 공용) — callTool 이 에이전트의 사업 범위로 business_id 기본값·결과 필터, whoami
   mcp.ts          JSON-RPC 2.0 MCP 서버 (Streamable HTTP 무상태 + stdio)
 lib/repos/        SQL 접근 (db 인자 주입 → 테스트는 :memory:)
 app/(console)/    콘솔 화면 (서버 컴포넌트)
@@ -46,20 +47,32 @@ app/api/          /api/health · /api/mcp · /api/v1/*
 요청(actor, action, params, reason)
   → 스키마 검증 (strict: 모르는 필드 거부)
   → 위험도 (정적 또는 현재 데이터 기준: 예) 발행된 청구서의 수정은 high)
-  → 정책
-      human/system          → 실행
-      agent + humanOnly     → denied
-      agent + frozen        → denied
-      agent + supervised    → pending
-      agent + guarded       → high 면 pending, low 면 실행
-      agent + autonomous    → 실행
+  → 정책 (에이전트는 위에서부터 차례로)
+      human/system                       → 실행
+      agent 정지·폐기                     → denied
+      agent + humanOnly                  → denied
+      agent + allowed_actions 밖          → denied  "이 에이전트(역할 …)의 허용 범위 밖"
+      agent + business_scope 밖           → denied  "사업 범위(…) 밖" — 요청이 닿는 사업 = input.business_id
+                                                     + 대상 객체 + ref/ids/objref/refs 필드의 객체 + scopeRefs (공용 객체는 세지 않음)
+      agent + frozen                     → denied
+      agent + supervised                 → pending (자율 권한 무시)
+      agent + guarded + low              → 실행
+      agent + guarded + high + 자율 권한  → 실행, 감사 결과 data.grant_id
+      agent + guarded + high             → pending
+      agent + autonomous                 → 실행
   → 실행은 트랜잭션 안에서 (백업처럼 noTransaction 인 액션 제외)
   → action_runs + action_run_refs 기록
 ```
 
 - 승인 시에는 **그 시점의 데이터로 다시 검증·실행**한다. 승인 대기로 들어갈 때 대상 객체의 지문을 저장하고,
   승인 시점에 대상이 바뀌었으면(예: 에이전트가 발행 요청 뒤 초안 금액을 바꿈) 실행하지 않고 failed 로 기록한다.
-- 요청한 에이전트가 정지·폐기되면 대기 요청은 자동 철회되고, 승인도 거부된다.
+- 요청한 에이전트가 정지·폐기되면 대기 요청은 자동 철회되고, 승인도 거부된다. 승인 시점에는 정책(AI 모드)을 다시 보지 않지만,
+  요청 이후 에이전트의 허용 범위·사업 범위가 줄었으면 승인도 거부한다(failed).
+- **신뢰 사다리** (docs/MEMORY.md §15): 권한은 좁게 시작해 증거로 넓힌다. 넓히는 것(`agent.grant` · `agent.set_memory_trust active` ·
+  `agent.configure` 확대)은 사람만, 좁히는 것은 워커의 `enforceTrust`(시간당 1회)도 SYSTEM 액션으로 한다 — 자율 권한으로 실행할 수 있는
+  액션의 실행이 문제 표시(`run.flag`)되면 회수, 활성 착지 기억이 14일에 2건 거절·정정되면 기억 등급 강등. 판단 근거는 모두 `action_runs`.
+- 읽기도 범위를 따른다: 사업 범위가 있는 에이전트의 도구는 `business_id` 기본값이 그 범위이고 다른 값은 오류, 결과에서 범위 밖 사업의
+  객체를 뺀다 (`get_object` 는 오류). AI 런타임의 컨텍스트 팩도 같은 필터.
 - 부분 수정의 이름·제목은 빈 값 금지, 고객 연결은 같은 사업 소속만, 지출·입금은 양수이며 입금은 잔액 이하.
 - 사람의 입력 오류는 폼에 되돌리고 기록하지 않는다. 에이전트의 모든 시도는 실패·거부 포함 기록한다 (모니터링 데이터).
 - `out` 채널: 발급 토큰처럼 호출자에게만 주고 감사에 남기지 않는 값.

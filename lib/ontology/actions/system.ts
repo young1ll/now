@@ -6,6 +6,7 @@ import { defineAction } from "../action";
 import { f } from "../fields";
 import { displayId } from "../ids";
 import { ActionError } from "../types";
+import { registerScope, registerScopeFields } from "./trust";
 import { must } from "./util";
 
 export const AI_MODE_LABEL = {
@@ -38,11 +39,18 @@ export const systemActions = [
     objectType: "agent",
     risk: "high",
     humanOnly: true,
-    fields: { name: f.text("이름", { required: true, placeholder: "Claude Code (운영)" }), description: f.textarea("역할 설명") },
+    fields: { name: f.text("이름", { required: true, placeholder: "Claude Code (운영)" }), description: f.textarea("역할 설명"), ...registerScopeFields },
     run({ db, out }, i) {
-      const { id, token } = createAgent(db, { name: i.name, description: i.description ?? "" });
+      // 허용 범위를 생략하면 역할의 기본값 (운영자 '*' · 큐레이터 memory.* 일부 · 리서처 note.* + memory.propose)
+      const scope = registerScope(db, i);
+      const { id, token } = createAgent(db, { name: i.name, description: i.description ?? "", ...scope });
       out.token = token; // 감사 기록에는 남기지 않는다
-      return { summary: `에이전트 ${displayId("agent", id)} '${i.name}' 등록`, refs: [{ type: "agent", id }] };
+      const narrowed = scope.allowed_actions !== "*" || scope.business_scope !== null;
+      return {
+        summary: `에이전트 ${displayId("agent", id)} '${i.name}' 등록${narrowed ? ` · 허용 ${scope.allowed_actions}${scope.business_scope !== null ? ` · 사업 범위 ${displayId("business", scope.business_scope)}` : ""}` : ""}`,
+        refs: [{ type: "agent", id }],
+        data: scope,
+      };
     },
   }),
   defineAction({

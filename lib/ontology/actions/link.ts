@@ -73,6 +73,11 @@ export const linkActions = [
     objectType: "system",
     risk: "high",
     fields: { link_id: f.number("링크 id", { required: true, int: true, min: 1 }) },
+    // 사업 범위 판정: 링크의 양 끝 (필드로는 보이지 않는다)
+    scopeRefs: (db, i) => {
+      const l = db.prepare("SELECT from_type, from_id, to_type, to_id FROM links WHERE id = ?").get(i.link_id) as { from_type: ObjectType; from_id: number; to_type: ObjectType; to_id: number } | undefined;
+      return l ? [{ type: l.from_type, id: l.from_id }, { type: l.to_type, id: l.to_id }] : [];
+    },
     run({ db }, i) {
       const l = db.prepare("SELECT * FROM links WHERE id = ?").get(i.link_id) as
         | { link_type: string; from_type: ObjectType; from_id: number; to_type: ObjectType; to_id: number }

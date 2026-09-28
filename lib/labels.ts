@@ -48,6 +48,15 @@ export const MEMORY_KIND = { fact: "사실", preference: "선호", lesson: "교�
 export const MEMORY_ORIGIN = { human: "사람", agent: "에이전트", consolidation: "통합", import: "가져오기" } as const;
 
 /** 문서 종류 (notes.kind) — 에피소드는 워커만 만든다 */
+export const AGENT_ROLE = { operator: "운영자", curator: "큐레이터", researcher: "리서처", custom: "사용자 정의" } as const;
+/** 역할별 기본 허용 액션 (agent.register 에서 허용 범위를 생략했을 때) */
+export const ROLE_DEFAULT_ALLOWED = { operator: "*", curator: "memory.propose,memory.merge,memory.retire", researcher: "note.*,memory.propose", custom: "*" } as const;
+
+export const MEMORY_TRUST = {
+  propose: { label: "제안", tone: "slate", help: "에이전트의 기억 제안은 항상 제안됨(proposed) — 사람이 확인해야 쓰인다" },
+  active: { label: "활성 착지", tone: "blue", help: "근거 2개 이상 · 외부 출처 아님이면 활성(active)으로 착지 — 사람 확인 전에도 팩에 들어간다" },
+} as const;
+
 export const NOTE_KIND = { note: "문서", playbook: "플레이북", episode: "에피소드", brief: "브리프", source: "외부 자료" } as const;
 export const NOTE_KIND_TONE = { note: "slate", playbook: "blue", episode: "zinc", brief: "slate", source: "amber" } as const;
 

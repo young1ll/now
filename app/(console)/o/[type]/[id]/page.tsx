@@ -10,6 +10,9 @@ import { Markdown } from "@/components/Markdown";
 import { MemoryLink, MemoryStatusTag, memoryHref } from "@/components/memory";
 import { neighborhood } from "@/lib/ontology/graph";
 import { RunTable } from "@/components/runs";
+import { TrustPanel } from "@/components/trust";
+import { computeSignals } from "@/lib/ontology/signals";
+import type { Agent } from "@/lib/repos/agents";
 import { Callout, Empty, OBJECT_ICON, ObjectLink, PageHeader, Panel, PropertyList, Tag, fmtTime } from "@/components/ui";
 import { currentScope } from "@/lib/context";
 import { formatDate } from "@/lib/dates";
@@ -178,6 +181,7 @@ function KnownPanel({ type, id, path }: { type: ObjectType; id: number; path: st
 /** 유형별 본문 패널 */
 function TypePanel({ type, obj, path }: { type: ObjectType; obj: ObjectDetail; path: string }) {
   const raw = obj.raw;
+
   if (type === "client") {
     const interactions = (raw.interactions as Interaction[]) ?? [];
     return (
@@ -258,10 +262,15 @@ function TypePanel({ type, obj, path }: { type: ObjectType; obj: ObjectDetail; p
   }
   if (type === "agent") {
     const runs = listRuns(db(), { actorType: "agent", actorId: String(obj.ref.id), limit: 30 });
+    const a = raw as unknown as Agent;
+    const suggestions = computeSignals(db(), null).filter((s) => s.kind.startsWith("trust.") && s.ref?.type === "agent" && s.ref.id === a.id);
     return (
-      <Panel title="이 에이전트의 실행" count={runs.length} flush action={<Link href={`/activity?actor=agent:${obj.ref.id}`} className="btn-minimal btn-sm">전체</Link>}>
-        {runs.length === 0 ? <Empty icon="agent">아직 실행 기록이 없습니다.</Empty> : <RunTable runs={runs} compact />}
-      </Panel>
+      <>
+        <TrustPanel agent={a} path={path} suggestions={suggestions} />
+        <Panel title="이 에이전트의 실행" count={runs.length} flush action={<Link href={`/activity?actor=agent:${obj.ref.id}`} className="btn-minimal btn-sm">전체</Link>}>
+          {runs.length === 0 ? <Empty icon="agent">아직 실행 기록이 없습니다.</Empty> : <RunTable runs={runs} compact />}
+        </Panel>
+      </>
     );
   }
   if (type === "business") {

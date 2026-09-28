@@ -39,6 +39,8 @@ export type ContextQuery = {
   env?: Record<string, string | undefined>;
   /** 기준일 (유효기간 판정) — 테스트용 */
   on?: string;
+  /** 이 사업의 항목만 넣는다 (사업 범위가 있는 에이전트 — 공용 항목은 businessId null) */
+  allow?: (businessId: number | null) => boolean;
 };
 
 /** 팩·화면에서 쓰는 상태 라벨. 오염된 미확인 기억은 "외부 출처·미검증" */
@@ -67,7 +69,7 @@ function memoryLine(db: DB, m: Memory): string {
 const validOn = (m: Memory, on: string) => (!m.valid_from || m.valid_from <= on) && (!m.valid_to || m.valid_to >= on);
 
 /** 줄은 예산 안에 드는 것만 만든다 (기억 줄은 링크 쿼리가 필요하다) */
-type Candidate = { ref: Ref; kind: ContextItem["kind"]; status?: string; line: () => string };
+type Candidate = { ref: Ref; kind: ContextItem["kind"]; status?: string; businessId: number | null; line: () => string };
 
 /**
  * 대상들의 살아 있는·유효한 기억 — 상태 순서(확인됨 → 활성 → 제안 → 충돌) 다음 id 순, 최대 limit 개와 전체 수.
@@ -97,7 +99,7 @@ export async function buildContext(db: DB, q: ContextQuery = {}): Promise<Contex
     const key = refKey({ type: "memory", id: m.id });
     if (seen.has(key) || !LIVE_STATUSES.includes(m.status) || !validOn(m, on)) return;
     seen.add(key);
-    out.push({ ref: { type: "memory", id: m.id }, kind: "memory", status: m.status, line: () => memoryLine(db, m) });
+    out.push({ ref: { type: "memory", id: m.id }, kind: "memory", status: m.status, businessId: m.business_id, line: () => memoryLine(db, m) });
   };
   const budget = q.budgetTokens ?? DEFAULT_BUDGET;
 
@@ -130,12 +132,18 @@ export async function buildContext(db: DB, q: ContextQuery = {}): Promise<Contex
         // 플레이북은 [playbook:ID], 외부 자료·미검증 에피소드는 "외부 출처·미검증" — 기억과 같은 무게 표시
         const tag = `${h.note?.kind === "playbook" ? "playbook" : "doc"}:${h.ref.id}${h.note?.tainted ? " · 외부 출처·미검증" : ""}`;
         const line = `[${tag}] ${body.startsWith(title) ? body : `${title} — ${body}`}`;
-        out.push({ ref: h.ref, kind: "doc", line: () => line });
+        out.push({ ref: h.ref, kind: "doc", businessId: h.businessId, line: () => line });
       } else {
         const line = `[obj:${h.key}] ${title}${body && body !== title ? ` — ${body}` : ""}`;
-        out.push({ ref: h.ref, kind: "object", line: () => line });
+        out.push({ ref: h.ref, kind: "object", businessId: h.ref.type === "business" ? h.ref.id : h.businessId, line: () => line });
       }
     }
+  }
+
+  // 사업 범위 밖 항목은 팩에 넣지 않는다 (예산을 세기 전에)
+  if (q.allow) {
+    const allow = q.allow;
+    out.splice(0, out.length, ...out.filter((c) => allow(c.businessId)));
   }
 
   // ④ 예산: 넘으면 거기서 멈춘다 (건너뛰고 뒤의 짧은 것을 넣지 않는다 — 우선순위가 곧 순서)

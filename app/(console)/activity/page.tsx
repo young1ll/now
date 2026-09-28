@@ -14,10 +14,12 @@ export const metadata = { title: "활동 로그" };
 export default async function ActivityPage({ searchParams }: { searchParams: SearchParams }) {
   const sp = await searchParams;
   const actor = one(sp.actor) ?? "";
-  const status = one(sp.status) as RunStatus | undefined;
+  const statusRaw = one(sp.status);
+  const flagged = statusRaw === "flagged";
+  const status = (flagged ? undefined : statusRaw) as RunStatus | undefined;
   const action = one(sp.action) || undefined;
   const before = Number(one(sp.before)) || undefined;
-  const f: RunFilter = { status: status && RUN_STATUS[status] ? status : undefined, action, beforeId: before, limit: 100 };
+  const f: RunFilter = { status: status && RUN_STATUS[status] ? status : undefined, action, beforeId: before, flagged, limit: 100 };
   if (actor === "human" || actor === "system") f.actorType = actor;
   else if (actor.startsWith("agent:")) Object.assign(f, { actorType: "agent", actorId: actor.slice(6) });
   else if (actor === "agent") f.actorType = "agent";
@@ -26,7 +28,7 @@ export default async function ActivityPage({ searchParams }: { searchParams: Sea
   const agents = listAgents(db(), new Date().toISOString());
   const q = (patch: Record<string, string | undefined>) => {
     const u = new URLSearchParams();
-    const cur = { actor, status: status ?? "", action: action ?? "", ...patch };
+    const cur = { actor, status: statusRaw ?? "", action: action ?? "", ...patch };
     for (const [k, v] of Object.entries(cur)) if (v) u.set(k, v);
     return `/activity${u.size ? `?${u}` : ""}`;
   };
@@ -54,9 +56,10 @@ export default async function ActivityPage({ searchParams }: { searchParams: Sea
         </label>
         <label>
           <span className="label-caps mb-1 block">상태</span>
-          <select name="status" defaultValue={status ?? ""} className="field w-32">
+          <select name="status" defaultValue={statusRaw ?? ""} className="field w-32">
             <option value="">전체</option>
             {Object.entries(RUN_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+            <option value="flagged">문제 표시</option>
           </select>
         </label>
         <label>
@@ -67,7 +70,7 @@ export default async function ActivityPage({ searchParams }: { searchParams: Sea
           </select>
         </label>
         <button className="btn-primary">적용</button>
-        {(actor || status || action) && <Link href="/activity" className="btn-minimal">초기화</Link>}
+        {(actor || statusRaw || action) && <Link href="/activity" className="btn-minimal">초기화</Link>}
       </form>
       <div className="p-px">
         <Panel title="실행 기록" count={runs.length} flush>

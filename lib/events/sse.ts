@@ -1,9 +1,9 @@
 import type { DB } from "@/lib/db";
-import { listEvents, matchesPattern } from "@/lib/repos/events";
+import { type NowEvent, listEvents, matchesPattern } from "@/lib/repos/events";
 
 /** 이벤트 SSE 스트림. after 이후 이벤트를 1초 간격으로 밀어 준다. 재접속 시 Last-Event-ID 로 이어받기. */
-/** reauth: 주기적으로 다시 확인할 인증 (false 면 스트림 종료 — 정지·폐기·단기 토큰 만료) */
-export function eventStream(req: Request, getDb: () => DB, opts: { type?: string; reauth?: () => boolean } = {}) {
+/** reauth: 주기적으로 다시 확인할 인증 (false 면 스트림 종료 — 정지·폐기·단기 토큰 만료) · visible: 보낼 이벤트만 거르기 (에이전트의 사업 범위) */
+export function eventStream(req: Request, getDb: () => DB, opts: { type?: string; reauth?: () => boolean; visible?: (evs: NowEvent[]) => NowEvent[] } = {}) {
   const url = new URL(req.url);
   let after = Number(req.headers.get("last-event-id") ?? url.searchParams.get("after") ?? NaN);
   if (!Number.isFinite(after)) after = listEvents(getDb(), { limit: 1 })[0]?.id ?? 0;
@@ -19,8 +19,8 @@ export function eventStream(req: Request, getDb: () => DB, opts: { type?: string
       timer = setInterval(() => {
         try {
           const evs = listEvents(getDb(), { afterId: after, limit: 200 });
-          for (const e of evs) {
-            after = e.id;
+          if (evs.length) after = evs[evs.length - 1].id;
+          for (const e of opts.visible ? opts.visible(evs) : evs) {
             if (type && !matchesPattern(type, e.type)) continue;
             controller.enqueue(enc.encode(`id: ${e.id}\nevent: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`));
           }

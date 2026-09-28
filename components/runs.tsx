@@ -6,7 +6,8 @@ import { db } from "@/lib/db";
 import { getAction, isStale } from "@/lib/ontology/execute";
 import type { FieldSpec } from "@/lib/ontology/fields";
 import { displayId, runId } from "@/lib/ontology/ids";
-import type { RunView } from "@/lib/repos/runs";
+import { approvalHistory } from "@/lib/ontology/trust";
+import { type RunView, grantIdOf } from "@/lib/repos/runs";
 
 const EXTRA_TITLES: Record<string, string> = { "iac.record_snapshot": "IaC 감사 기록" };
 
@@ -41,7 +42,7 @@ export function RunTable({ runs, compact = false, showObjects = true }: { runs: 
           <th>행위자</th>
           <th>액션 · 내용</th>
           {showObjects && !compact && <th>객체</th>}
-          <th className="w-[88px]">상태</th>
+          <th className="w-[96px]">상태</th>
         </tr>
       </thead>
       <tbody>
@@ -67,7 +68,13 @@ export function RunTable({ runs, compact = false, showObjects = true }: { runs: 
                   </div>
                 </td>
               )}
-              <td><Tag tone={st.tone}>{st.label}</Tag></td>
+              <td>
+                <div className="flex flex-wrap gap-1">
+                  <Tag tone={st.tone}>{st.label}</Tag>
+                  {grantIdOf(r) !== null && <Tag tone="ai" title={`자율 권한 #${grantIdOf(r)} 으로 승인 없이 실행`}>자율</Tag>}
+                  {r.flagged_at && <Tag tone="red" title={`${r.flagged_by ?? ""}: ${r.flag_note ?? ""}`}>문제</Tag>}
+                </div>
+              </td>
             </tr>
           );
         })}
@@ -107,6 +114,7 @@ export function ApprovalCard({ run, dense = false }: { run: RunView; dense?: boo
           <Actor type={run.actor_type} name={run.actor_name} />
           {run.refs.map((x) => <ObjectLink key={`${x.type}${x.id}`} type={x.type} id={x.id} />)}
         </div>
+        {run.actor_type === "agent" && <ApprovalTrack run={run} />}
         {run.reason && (
           <div className="border-l-2 border-ai bg-ai/10 px-2.5 py-1.5 text-[12px] text-fg-2">
             <span className="label-caps mr-2 text-ai-fg">근거</span>{run.reason}
@@ -137,5 +145,16 @@ export function ApprovalCard({ run, dense = false }: { run: RunView; dense?: boo
         </form>
       </div>
     </article>
+  );
+}
+
+/** 승인 카드의 한 줄: 이 에이전트의 이 액션 — 최근 30일 승인·거절 이력 (자율 권한 판단 도움) */
+function ApprovalTrack({ run }: { run: RunView }) {
+  const h = approvalHistory(db(), Number(run.actor_id), run.action);
+  return (
+    <div className="text-[11.5px] text-fg-3">
+      이 에이전트의 이 액션 (30일): 승인 이력 <span className="mono text-fg-2">{h.approved}</span>건 · 거절 <span className={`mono ${h.rejected ? "text-warning-fg" : "text-fg-2"}`}>{h.rejected}</span>건
+      {h.flagged > 0 && <> · 문제 표시 <span className="mono text-danger-fg">{h.flagged}</span>건</>}
+    </div>
   );
 }

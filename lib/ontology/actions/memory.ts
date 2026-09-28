@@ -9,6 +9,7 @@ import {
   INACTIVE_STATUSES, LIVE_STATUSES, MEMORY_KINDS, type Memory, type MemoryStatus, actorKey, addMemoryLink, getMemory, insertMemory, memoryLinks,
   moveMemoryLinks, removeContradiction, updateMemory,
 } from "@/lib/repos/memories";
+import { getAgent } from "@/lib/repos/agents";
 import { getNote } from "@/lib/repos/notes";
 import type { RunResult } from "@/lib/repos/runs";
 import { type ActionCtx, defineAction } from "../action";
@@ -225,12 +226,16 @@ export function inheritsTaint(db: DB, evidence: Ref[]): boolean {
   return evidence.some((r) => (r.type === "memory" ? !!getMemory(db, r.id)?.tainted : r.type === "note" ? !!getNote(db, r.id)?.tainted : false));
 }
 
+/** 활성 착지에 필요한 근거 수 */
+export const ACTIVE_LANDING_EVIDENCE = 2;
+
 /**
- * 에이전트가 제안한 기억이 어디에 착지하는가. 지금은 항상 proposed —
- * M5 에서 에이전트 신뢰 등급·근거 수에 따라 active 로 (단, tainted 는 사람 확인 없이 active/verified 불가).
+ * 에이전트가 제안한 기억이 어디에 착지하는가 (M5 신뢰 사다리): 에이전트의 기억 등급(memory_trust)이 active 이고
+ * 외부 출처(tainted)가 아니고 근거가 2개 이상이면 active, 아니면 proposed. tainted 는 사람 확인 없이 active/verified 가 될 수 없다.
  */
-export function landingStatus(_db: DB, _actor: Actor, _m: { tainted: boolean; evidence: number }): MemoryStatus {
-  return "proposed";
+export function landingStatus(db: DB, actor: Actor, m: { tainted: boolean; evidence: number }): MemoryStatus {
+  if (actor.type !== "agent" || m.tainted || m.evidence < ACTIVE_LANDING_EVIDENCE) return "proposed";
+  return getAgent(db, Number(actor.id))?.memory_trust === "active" ? "active" : "proposed";
 }
 
 const isHuman = (a: Actor) => a.type !== "agent";
@@ -368,7 +373,8 @@ function remember(ctx: ActionCtx, i: RememberInput, mode: "propose" | "record"):
   return {
     summary: `기억 ${MEM(id)} ${verb}${conflicts.length ? ` · 충돌 ${conflicts.map(MEM).join(", ")}` : ""}: ${short(statement)}`,
     refs: [memRef(id), ...about, ...conflicts.map(memRef)],
-    data: { memory_id: id, deduped: false, status: after.status, conflicts },
+    // landing = 처음 착지한 상태 (충돌로 곧바로 disputed 가 되어도 — 신뢰 지표의 "활성 착지" 근거)
+    data: { memory_id: id, deduped: false, status: after.status, landing: status, conflicts },
   };
 }
 
@@ -387,7 +393,7 @@ export const memoryActions = [
     name: "memory.propose",
     title: "기억 제안",
     description:
-      "반복해서 쓸 만한 사실·선호·교훈을 기억으로 제안한다. 에이전트가 제안하면 proposed(사람 확인 전), 사람이 하면 verified. evidence(근거 객체) 1개 이상 필수(에이전트). 문장은 대상을 이름으로 적은 자기완결적 한 문장 — 지시문·비밀값 금지. 같은 기억이 있으면 새로 만들지 않고 근거만 보강하고, 숫자·날짜가 다른 기억과 충돌하면 disputed 가 된다.",
+      "반복해서 쓸 만한 사실·선호·교훈을 기억으로 제안한다. 에이전트가 제안하면 proposed(사람 확인 전 — 기억 등급 active 인 에이전트가 근거 2개 이상·외부 출처 아닌 제안을 하면 active), 사람이 하면 verified. evidence(근거 객체) 1개 이상 필수(에이전트). 문장은 대상을 이름으로 적은 자기완결적 한 문장 — 지시문·비밀값 금지. 같은 기억이 있으면 새로 만들지 않고 근거만 보강하고, 숫자·날짜가 다른 기억과 충돌하면 disputed 가 된다.",
     objectType: "memory",
     risk: "low",
     fields: common,

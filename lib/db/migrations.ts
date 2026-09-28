@@ -515,4 +515,37 @@ export const migrations: string[] = [
   CREATE INDEX agent_sessions_episode_pending ON agent_sessions(id) WHERE episode_recorded_at IS NULL AND status IN ('succeeded','failed');
   CREATE INDEX memory_uses_session ON memory_uses(session_id, how);
   `,
+  // 9: 신뢰 사다리 (docs/MEMORY.md §15) — 에이전트 역할·허용 액션(glob)·사업 범위·기억 등급, 자율 권한(액션 하나 · 만료 필수),
+  // 사람의 "문제 표시"(flag). 판단 근거는 모두 action_runs 에서 계산한다 — 점수 열은 두지 않는다.
+  `
+  ALTER TABLE agents ADD COLUMN role TEXT NOT NULL DEFAULT 'operator' CHECK (role IN ('operator','curator','researcher','custom'));
+  ALTER TABLE agents ADD COLUMN allowed_actions TEXT NOT NULL DEFAULT '*';   -- 쉼표 구분 glob: "memory.*,note.create"
+  ALTER TABLE agents ADD COLUMN business_scope INTEGER REFERENCES businesses(id) ON DELETE SET NULL;  -- NULL = 전체
+  ALTER TABLE agents ADD COLUMN memory_trust TEXT NOT NULL DEFAULT 'propose' CHECK (memory_trust IN ('propose','active'));
+
+  CREATE TABLE agent_grants (
+    id             INTEGER PRIMARY KEY,
+    agent_id       INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    action         TEXT NOT NULL,          -- 정확한 액션 이름 (glob 아님 — 넓은 권한은 한 번에 주지 않는다)
+    granted_by     TEXT NOT NULL,
+    granted_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    expires_at     TEXT NOT NULL,
+    revoked_at     TEXT,
+    revoked_by     TEXT,
+    revoked_reason TEXT
+  );
+  CREATE INDEX agent_grants_agent ON agent_grants(agent_id, action);
+
+  ALTER TABLE action_runs ADD COLUMN flagged_at TEXT;
+  ALTER TABLE action_runs ADD COLUMN flagged_by TEXT;
+  ALTER TABLE action_runs ADD COLUMN flag_note TEXT;
+  `,
+  // 10: 신호 상태에 대상·사업 — signal.resolved 이벤트도 subject·business_id 를 실어 사업 범위 에이전트에게 걸러지게 한다.
+  // located = 1 이면 두 값을 기록한 행 (이전 행은 다음 감지 때 채워진다; 그 전에 해소되면 범위를 모르는 이벤트로 표시)
+  `
+  ALTER TABLE signal_state ADD COLUMN business_id INTEGER;
+  ALTER TABLE signal_state ADD COLUMN subject_type TEXT;
+  ALTER TABLE signal_state ADD COLUMN subject_id INTEGER;
+  ALTER TABLE signal_state ADD COLUMN located INTEGER NOT NULL DEFAULT 0;
+  `,
 ];

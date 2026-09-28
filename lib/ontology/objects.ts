@@ -2,7 +2,7 @@
 import type { DB } from "@/lib/db";
 import { daysBetween, formatDate, today } from "@/lib/dates";
 import {
-  CLIENT_KIND, CLIENT_STATUS, INVOICE_STATUS, MEMORY_KIND, MEMORY_ORIGIN, MEMORY_STATUS, NOTE_KIND, PRIORITY, RECURRENCE, TASK_STATUS, type Tone,
+  AGENT_ROLE, CLIENT_KIND, CLIENT_STATUS, INVOICE_STATUS, MEMORY_KIND, MEMORY_ORIGIN, MEMORY_STATUS, MEMORY_TRUST, NOTE_KIND, PRIORITY, RECURRENCE, TASK_STATUS, type Tone,
 } from "@/lib/labels";
 import { formatMoney } from "@/lib/money";
 import { type AgentRow, getAgent, listAgents } from "@/lib/repos/agents";
@@ -426,6 +426,10 @@ function agentRecord(a: AgentRow): ObjectRecord {
     businessId: null,
     status: AGENT_STATUS[a.status],
     props: {
+      role: AGENT_ROLE[a.role],
+      allowed: a.allowed_actions,
+      scope: a.business_scope_name ?? "전체",
+      memory_trust: MEMORY_TRUST[a.memory_trust].label,
       token: `${a.token_prefix}…`,
       last_seen: a.last_seen_at ? a.last_seen_at.replace("T", " ").slice(0, 16) : "—",
       runs_24h: String(a.runs_24h),
@@ -439,11 +443,13 @@ const agent: ObjectTypeDef = {
   type: "agent",
   label: "에이전트",
   plural: "에이전트",
-  description: "이 운영 체제에 접속하는 AI 에이전트.",
+  description: "이 운영 체제에 접속하는 AI 에이전트. 역할 · 허용 액션(glob) · 사업 범위 · 기억 등급 · 자율 권한(agent_grants)으로 권한이 정해진다.",
   createAction: "agent.register",
-  actions: ["agent.set_status"],
-  actionsFor: (raw) => (raw.status === "revoked" ? [] : ["agent.set_status"]),
+  actions: ["agent.configure", "agent.grant", "agent.set_memory_trust", "agent.set_status"],
+  actionsFor: (raw) => (raw.status === "revoked" ? [] : ["agent.configure", "agent.grant", "agent.set_memory_trust", "agent.set_status"]),
   columns: [
+    { key: "role", label: "역할" },
+    { key: "scope", label: "사업 범위" },
     { key: "token", label: "토큰", mono: true },
     { key: "last_seen", label: "최근 접속", mono: true },
     { key: "runs_24h", label: "24h 실행", num: true },
@@ -459,7 +465,13 @@ const agent: ObjectTypeDef = {
     if (!a) return undefined;
     const rec = agent.list(db, null).find((r) => r.ref.id === id)!;
     const { token_hash: _omit, ...raw } = a;
-    return detail(rec, { token: "토큰 접두사", last_seen: "최근 접속", runs_24h: "24시간 실행", pending: "승인 대기", failed_24h: "24시간 실패·거부" }, [], raw);
+    const links = a.business_scope ? [link("business", a.business_scope, rec.props.scope, "사업 범위")] : [];
+    return detail(
+      rec,
+      { role: "역할", allowed: "허용 액션", scope: "사업 범위", memory_trust: "기억 등급", token: "토큰 접두사", last_seen: "최근 접속", runs_24h: "24시간 실행", pending: "승인 대기", failed_24h: "24시간 실패·거부" },
+      links,
+      raw,
+    );
   },
 };
 

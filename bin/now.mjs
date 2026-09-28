@@ -6,6 +6,7 @@ const HELP = `now — Now 사업 운영 체제 CLI (에이전트용)
 환경변수  NOW_URL=http://127.0.0.1:3000   NOW_AGENT_TOKEN=now_…
 
 읽기
+  now whoami                             내 역할 · 허용 액션 · 사업 범위 · 자율 권한 · 기억 등급
   now overview [--business N]            운영 현황 (먼저 호출)
   now signals [--severity critical]      주의가 필요한 상태 = 할 일 큐 (제안 액션 포함)
   now ontology                           객체 유형 · 속성 · 링크 유형 · 액션
@@ -127,6 +128,7 @@ async function follow() {
 
 const [cmd, a1, a2] = pos;
 const commands = {
+  whoami: () => call("whoami"),
   overview: () => call("get_overview", { business_id: num(flags.business) }),
   signals: async () => call("list_signals", { business_id: num(flags.business), severity: flags.severity }),
   ontology: () => call("describe_ontology"),

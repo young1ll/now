@@ -11,7 +11,8 @@ import { indexPending } from "@/lib/knowledge/indexer";
 import { gcVectors } from "@/lib/knowledge/vectors";
 import { executeAction } from "@/lib/ontology/execute";
 import { computeSignals } from "@/lib/ontology/signals";
-import { SYSTEM } from "@/lib/ontology/types";
+import { maybeEnforceTrust } from "@/lib/ontology/trust";
+import { type Ref, SYSTEM } from "@/lib/ontology/types";
 import { createSession, getProfile, getSession } from "@/lib/repos/ai";
 import { type NowEvent, emitEvent, getEvent, lastEventId, listEvents, matchesPattern } from "@/lib/repos/events";
 import { getSetting, setSetting } from "@/lib/repos/settings";
@@ -40,18 +41,30 @@ export function detectSignals(db: DB, now = new Date()): { raised: number; resol
       current.delete(s.key);
       const payload = { key: s.key, kind: s.kind, severity: s.severity, title: s.title, detail: s.detail, since: s.since ?? null, suggested: s.suggested, business_id: s.businessId };
       if (prev === undefined) {
-        db.prepare("INSERT INTO signal_state (key, kind, severity, title, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?)").run(s.key, s.kind, s.severity, s.title, iso, iso);
+        db.prepare("INSERT INTO signal_state (key, kind, severity, title, first_seen, last_seen, business_id, subject_type, subject_id, located) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)").run(
+          s.key, s.kind, s.severity, s.title, iso, iso, s.businessId ?? null, s.ref?.type ?? null, s.ref?.id ?? null,
+        );
         emitEvent(db, { type: "signal.raised", subject: s.ref ?? null, payload });
         raised++;
       } else {
-        db.prepare("UPDATE signal_state SET severity = ?, title = ?, last_seen = ? WHERE key = ?").run(s.severity, s.title, iso, s.key);
+        db.prepare("UPDATE signal_state SET severity = ?, title = ?, last_seen = ?, business_id = ?, subject_type = ?, subject_id = ?, located = 1 WHERE key = ?").run(
+          s.severity, s.title, iso, s.businessId ?? null, s.ref?.type ?? null, s.ref?.id ?? null, s.key,
+        );
         if (prev !== s.severity && s.severity === "critical") emitEvent(db, { type: "signal.escalated", subject: s.ref ?? null, payload: { ...payload, previous: prev } });
       }
     }
     for (const [key] of current) {
-      const row = db.prepare("SELECT * FROM signal_state WHERE key = ?").get(key) as { kind: string; title: string; severity: string };
+      const row = db.prepare("SELECT * FROM signal_state WHERE key = ?").get(key) as {
+        kind: string; title: string; severity: string; business_id: number | null; subject_type: string | null; subject_id: number | null; located: number;
+      };
       db.prepare("DELETE FROM signal_state WHERE key = ?").run(key);
-      emitEvent(db, { type: "signal.resolved", payload: { key, kind: row.kind, title: row.title, severity: row.severity } });
+      // 대상·사업을 raised 와 똑같이 싣는다 — 사업 범위 에이전트의 이벤트 필터(visibleEvents)가 제목을 걸러낼 수 있게
+      const subject = row.subject_type && row.subject_id ? ({ type: row.subject_type, id: row.subject_id } as Ref) : null;
+      emitEvent(db, {
+        type: "signal.resolved",
+        subject,
+        payload: { key, kind: row.kind, title: row.title, severity: row.severity, business_id: row.business_id, ...(row.located ? {} : { scope_unknown: true }) },
+      });
       resolved++;
     }
   })();
@@ -329,9 +342,12 @@ export async function executeQueued(db: DB, opts: WorkerOpts & { background?: bo
 }
 
 /** 한 번의 틱: 매칭은 매번, 신호·스케줄은 분 단위 */
-export async function tick(db: DB, opts: WorkerOpts & { signals?: boolean; schedules?: boolean; background?: boolean; index?: boolean; embed?: boolean; episodes?: boolean; curate?: boolean } = {}) {
+export async function tick(db: DB, opts: WorkerOpts & { signals?: boolean; schedules?: boolean; background?: boolean; index?: boolean; embed?: boolean; episodes?: boolean; curate?: boolean; trust?: boolean } = {}) {
   const now = opts.now ?? new Date();
-  const out = { signals: { raised: 0, resolved: 0 }, scheduled: 0, queued: 0, executed: 0, episodes: 0, indexed: 0, embedded: 0, curated: null as Awaited<ReturnType<typeof maybeCurate>> };
+  const out = {
+    signals: { raised: 0, resolved: 0 }, scheduled: 0, queued: 0, executed: 0, episodes: 0, indexed: 0, embedded: 0,
+    curated: null as Awaited<ReturnType<typeof maybeCurate>>, trust: null as ReturnType<typeof maybeEnforceTrust>,
+  };
   // 커서를 먼저 확정해야 이번 틱에 새로 생긴 신호가 트리거에 전달된다
   out.queued = matchEvents(db, now);
   if (opts.signals !== false) out.signals = detectSignals(db, now);
@@ -370,6 +386,14 @@ export async function tick(db: DB, opts: WorkerOpts & { signals?: boolean; sched
       } catch (e) {
         console.error("[now-worker] 임베딩 실패", e);
       }
+    }
+  }
+  // 신뢰 사다리 자동 강등 (자율 권한 회수 · 기억 등급 강등 — SYSTEM 액션) — 시간당 1회, 분 단위 틱에서만
+  if (opts.trust !== false && opts.signals !== false) {
+    try {
+      out.trust = maybeEnforceTrust(db, now);
+    } catch (e) {
+      console.error("[now-worker] 신뢰 강등 실패", e);
     }
   }
   // 큐레이터 (결정적 정리) — 시간당 1회, 분 단위 틱(신호 감지와 같은 주기)에서만

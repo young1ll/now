@@ -21,6 +21,8 @@ export const businessActions = [
       currency: f.enum("기본 통화", CUR, curLabels, { required: true }),
       color: f.text("색상", { help: "#RRGGBB", max: 7 }),
     },
+    // 새 사업은 어떤 사업 범위에도 들지 않는다
+    scopeRefs: () => "new_business",
     preview: (_db, i) => `사업 '${i.name}' 등록 (${i.currency})`,
     run({ db }, i) {
       const id = createBusiness(db, {

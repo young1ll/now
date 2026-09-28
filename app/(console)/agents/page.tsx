@@ -2,13 +2,17 @@ import { cookies, headers } from "next/headers";
 import Link from "next/link";
 import { dismissToken, runActionForm } from "@/app/actions/console";
 import { TOKEN_COOKIE } from "@/lib/context";
+import { ActionDrawer } from "@/components/ActionDrawer";
 import { ActionForm } from "@/components/ActionForm";
+import { AllowedChips, TrustPanel } from "@/components/trust";
 import { CopyButton } from "@/components/client";
 import { ConfirmButton } from "@/components/ConfirmButton";
 import { Icon } from "@/components/icons";
 import { Actor, Callout, Empty, PageHeader, Panel, Tag, timeAgo } from "@/components/ui";
 import { db } from "@/lib/db";
 import { AI_MODE_LABEL } from "@/lib/ontology/actions/system";
+import { computeSignals } from "@/lib/ontology/signals";
+import { AGENT_ROLE, MEMORY_TRUST } from "@/lib/labels";
 import { getAction } from "@/lib/ontology/execute";
 import { type SearchParams, one } from "@/lib/params";
 import { listAgents } from "@/lib/repos/agents";
@@ -23,6 +27,8 @@ const MODE_DETAIL = {
   frozen: "에이전트 쓰기 전면 차단 (읽기만). 비상 정지.",
 };
 
+const TRUST_KINDS = ["trust.grant_candidate", "trust.memory_candidate"];
+
 export default async function AgentsPage({ searchParams }: { searchParams: SearchParams }) {
   const sp = await searchParams;
   const mode = getAiMode(db());
@@ -32,6 +38,9 @@ export default async function AgentsPage({ searchParams }: { searchParams: Searc
   const h = await headers();
   const origin = `${h.get("x-forwarded-proto") ?? "http"}://${h.get("host") ?? "localhost:3000"}`;
   const token = newToken ?? "<토큰>";
+  // 넓힐 후보 (자율 권한 · 기억 등급) — 신호에서
+  const candidates = computeSignals(db(), null).filter((s) => TRUST_KINDS.includes(s.kind));
+  const live = agents.filter((a) => a.status !== "revoked");
 
   return (
     <>
@@ -72,7 +81,7 @@ export default async function AgentsPage({ searchParams }: { searchParams: Searc
           <Panel title="등록된 에이전트" count={agents.length} flush>
             {agents.length === 0 ? <Empty icon="agent">등록된 에이전트가 없습니다.</Empty> : (
               <table className="grid-table">
-                <thead><tr><th>에이전트</th><th>상태</th><th>토큰</th><th>최근 접속</th><th className="text-right">24h</th><th className="text-right">대기</th><th className="text-right">실패</th><th /></tr></thead>
+                <thead><tr><th>에이전트</th><th>상태</th><th>역할 · 범위</th><th>토큰</th><th>최근 접속</th><th className="text-right">24h</th><th className="text-right">대기</th><th className="text-right">실패</th><th /></tr></thead>
                 <tbody>
                   {agents.map((a) => (
                     <tr key={a.id} className={a.status === "revoked" ? "opacity-50" : ""}>
@@ -81,6 +90,15 @@ export default async function AgentsPage({ searchParams }: { searchParams: Searc
                         {a.description && <div className="max-w-[220px] truncate text-[11px] text-fg-3">{a.description}</div>}
                       </td>
                       <td><Tag tone={a.status === "active" ? "green" : a.status === "suspended" ? "amber" : "zinc"}>{{ active: "활성", suspended: "정지", revoked: "폐기" }[a.status]}</Tag></td>
+                      <td className="max-w-[220px]">
+                        <div className="flex flex-wrap items-center gap-1 text-[11.5px]">
+                          <span className="text-fg-2">{AGENT_ROLE[a.role]}</span>
+                          <span className="text-fg-4">·</span>
+                          <span className="text-fg-2">{a.business_scope_name ?? "전체"}</span>
+                          {a.memory_trust === "active" && <Tag tone={MEMORY_TRUST.active.tone}>{MEMORY_TRUST.active.label}</Tag>}
+                        </div>
+                        <div className="mt-0.5"><AllowedChips allowed={a.allowed_actions} /></div>
+                      </td>
                       <td className="mono text-fg-3">{a.token_prefix}…</td>
                       <td className="mono text-fg-3">{timeAgo(a.last_seen_at)}</td>
                       <td className="num">{a.runs_24h}</td>
@@ -109,6 +127,15 @@ export default async function AgentsPage({ searchParams }: { searchParams: Searc
         </div>
 
         <div className="flex flex-col gap-px xl:col-span-5">
+          <Panel title="신뢰 사다리 — 권한은 좁게 시작해 증거로 넓힌다">
+            <p className="text-[12.5px] text-fg-2">
+              넓히는 것(자율 권한 · 기억 등급 · 범위 확대)은 사람이, 좁히는 것은 워커도 합니다 — 자율 권한으로 실행한 결과를 &quot;문제 표시&quot;하면 권한이 회수되고,
+              활성 착지 기억을 14일에 2건 거절·정정하면 기억 등급이 내려갑니다. 모든 지표는 활동 로그에서 계산합니다.
+            </p>
+            {candidates.length > 0 && (
+              <p className="mt-2 text-[12px] text-primary-fg">넓힐 후보 {candidates.length}건 — 아래 에이전트 카드에서 원클릭으로 부여할 수 있습니다.</p>
+            )}
+          </Panel>
           <Panel title="에이전트 등록">
             <ActionForm def={getAction("agent.register")!} db={db()} scope={null} values={{}} next="/agents" />
           </Panel>
@@ -132,11 +159,18 @@ curl -X POST -H "Authorization: Bearer ${token}" \\
   -d '{"params":{"business_id":1,"title":"…"},"reason":"…"}' \\
   ${origin}/api/v1/actions/task.create`}</pre>
               </div>
-              <p className="text-fg-3">도구: get_overview · list_signals · search_objects · get_object · list_actions · run_action · get_run · list_my_runs · cancel_run. 자세한 내용은 docs/AGENTS.md.</p>
+              <p className="text-fg-3">도구: whoami · get_overview · list_signals · search_objects · get_object · list_actions · run_action · get_run · list_my_runs · cancel_run. 자세한 내용은 docs/AGENTS.md.</p>
             </div>
           </Panel>
         </div>
       </div>
+
+      <div className="grid gap-px bg-void p-px xl:grid-cols-2">
+        {live.map((a) => (
+          <TrustPanel key={a.id} agent={a} path="/agents" title suggestions={candidates.filter((s) => s.ref?.type === "agent" && s.ref.id === a.id)} />
+        ))}
+      </div>
+      <ActionDrawer sp={sp} path="/agents" scope={null} next="/agents" />
     </>
   );
 }

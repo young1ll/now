@@ -11,6 +11,7 @@ import { latestSnapshot } from "@/lib/repos/snapshots";
 import { listTasks } from "@/lib/repos/tasks";
 import { listBackups } from "@/lib/system";
 import { displayId } from "./ids";
+import { trustSuggestions } from "./trust";
 import type { Ref } from "./types";
 
 export type Severity = "critical" | "warning" | "info";
@@ -191,6 +192,8 @@ export function computeSignals(db: DB, scope: Scope, on = today()): Signal[] {
 
   // 시스템 신호는 전체 범위에서만
   if (scope === null) {
+    // 신뢰 사다리: 넓힐 후보 (자율 권한 · 기억 등급) — 결정은 사람이
+    out.push(...trustSuggestions(db));
     const backups = listBackups();
     const lastBackup = backups[0]?.at.slice(0, 10);
     if (!lastBackup || daysBetween(lastBackup, on) > 7) {

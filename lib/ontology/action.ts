@@ -34,6 +34,11 @@ export type ActionDef<S extends Fields = Fields> = {
   noTransaction?: boolean;
   /** 기존 객체를 대상으로 하는 액션이면 대상 유형과 id 파라미터 */
   target?: { type: ObjectType; param: keyof S & string };
+  /**
+   * 사업 범위 판정(policy.businessesOf)에 더할 객체 — 필드로 드러나지 않는 참조 (link.delete 의 양 끝, payment.delete 의 청구서).
+   * "new_business" = 새 사업을 만든다 → 사업 범위가 있는 에이전트는 할 수 없다.
+   */
+  scopeRefs?: (db: DB, input: InputOf<S>) => Ref[] | "new_business";
   /** 수정 폼의 기본값 (대상 객체의 현재 값) */
   prefill?: (db: DB, id: number) => Partial<Record<keyof S, unknown>> | undefined;
   /** 승인 대기 시 보여줄 한 줄 요약 */
@@ -43,8 +48,18 @@ export type ActionDef<S extends Fields = Fields> = {
 
 export type AnyAction = ActionDef<Fields> & { schema: z.ZodType<Record<string, unknown>> };
 
+/** 정의된 모든 액션 (이름 → 정의). 카탈로그(actions/index.ts)를 import 하면 순환이 되는 곳(액션 안의 검증)에서 쓴다 */
+const DEFINED = new Map<string, AnyAction>();
+
 export function defineAction<S extends Fields>(def: ActionDef<S>): AnyAction {
-  return { ...(def as unknown as ActionDef<Fields>), schema: objectSchema(def.fields) as z.ZodType<Record<string, unknown>> };
+  const a = { ...(def as unknown as ActionDef<Fields>), schema: objectSchema(def.fields) as z.ZodType<Record<string, unknown>> };
+  DEFINED.set(a.name, a);
+  return a;
+}
+
+/** 지금까지 정의된 액션 — 실행 시점에는 카탈로그 전체 (executeAction 이 카탈로그를 불러온 뒤) */
+export function definedActions(): AnyAction[] {
+  return [...DEFINED.values()];
 }
 
 /** actor 를 모르면(화면의 위험도 표시 등) 에이전트로 본다 — 더 엄격한 쪽 */

@@ -77,12 +77,13 @@ now events --follow --type signal.
 
 | 도구 | 용도 |
 |---|---|
-| `get_overview` | AI 모드, 신호 수, 승인 대기, 업무·미수금·현금흐름 — **시작할 때 먼저** |
+| `whoami` | 나의 역할 · 허용 액션 · 사업 범위 · 기억 등급 · 유효한 자율 권한 · AI 모드 · 최근 30일 신뢰 지표 · 지금 가능한 것 요약(`summary`) — **세션마다 한 번 먼저** |
+| `get_overview` | AI 모드, 신호 수, 승인 대기, 업무·미수금·현금흐름, 최근 7일 자율도 — **시작할 때 먼저** |
 | `list_signals` | 할 일 큐. 각 신호에 `suggested` 액션과 파라미터 |
 | `describe_ontology` | 객체 유형·액션·규약 |
 | `recall` | 자연어 회상 검색 — 이름·속성·접촉 이력·문서 본문(어휘) + 뜻이 비슷한 표현(의미 — 임베딩 공간이 활성일 때) + 관계(그래프). 흐릿하게 찾을 때 먼저. `about` 으로 기준 객체 주변 우선. 결과 `why`: `lexical` 내용 · `semantic` 의미 유사(`similarity` = 코사인) · `graph` 관계 · `ref` 직접 참조 · `about` 주변. `vector` 는 쓴 공간(없으면 null), `degraded` 가 있으면 의미 검색 없이 어휘 + 관계로만 찾은 결과 |
 | `search_objects` / `get_object` | 유형별 목록 · 읽기 (속성·raw·연결·이력·현재 가능한 액션) |
-| `list_actions` | 액션 카탈로그 + 입력 JSON Schema (사람 전용 액션 제외) |
+| `list_actions` | 액션 카탈로그 + 입력 JSON Schema (사람 전용 액션 · 내 허용 범위 밖 액션 제외) |
 | `run_action` | 실행. `reason` 필수 — 승인자와 감사 로그에 보인다 |
 | `get_run` / `list_my_runs` / `cancel_run` | 승인 대기 결과 확인·철회 |
 | `traverse` / `find_path` | 그래프: 이웃(1~4단계) · 두 객체 사이 관계 경로 |
@@ -95,6 +96,28 @@ now events --follow --type signal.
 
 `run_action` 결과 `status`:
 - `applied` 적용 · `pending` 사람 승인 대기 (get_run 으로 확인) · `failed` 입력/규칙 오류 (error 확인 후 수정) · `denied` 정책 거부 (사람에게 요청)
+
+### 권한 — 역할 · 범위 · 자율 권한 · 신뢰 사다리 (M5)
+
+권한은 **좁게 시작해 증거로 넓어진다.** 넓히는 것은 항상 사람이, 좁히는 것은 워커도 자동으로 한다. `whoami` 로 지금 내 권한을 확인하고 그 안에서 일하라.
+
+| 항목 | 의미 | 에이전트가 할 일 |
+|---|---|---|
+| 역할 `role` | operator(운영자) · curator(큐레이터) · researcher(리서처) · custom — 표시·기본값 | 역할에 맞는 일만 한다 (큐레이터는 기억 정리만) |
+| 허용 액션 `allowed_actions` | 쉼표 glob (`*` · `memory.*,note.create`). 밖의 액션은 `denied` "이 에이전트(역할 …)의 허용 범위 밖" | `list_actions` 가 허용 범위 안의 것만 보여 준다. 밖의 일이 필요하면 `note.create`(허용되면)로 사람에게 제안 |
+| 사업 범위 `business_scope` | 한 사업으로 제한 (없으면 전체). 요청이 닿는 사업 = `business_id` + 대상 객체 + 참조 필드(`client_id` · `about` · `evidence` · `link.create` 의 양쪽 …)의 객체. 사업 없는 공용 문서·기억은 통과. 새 사업은 만들 수 없다 | 읽기 도구의 `business_id` 는 생략하면 내 범위, 다른 값이면 오류. 범위 밖 객체는 검색·회상·그래프·팩·신호·이벤트에서 보이지 않고 `get_object` 는 오류 |
+| 자율 권한 (`agent_grants`) | 가드 모드에서 고위험 액션 **하나**를 승인 없이 실행 (정확한 이름 · 1~90일 뒤 만료). 감독 모드에서는 무시. 허용 범위 밖이 된 권한은 쓰이지 않는다(`whoami.unusable_grants`). 권한으로 실행한 결과는 `get_run` 등에서 그대로 `applied` (`grant_id` 에 권한 id) | 권한은 요청하지 않는다 — 사람의 승인 이력(최근 30일 승인 10건 · 거절 0 · 문제 표시 0)이 쌓이면 콘솔이 부여를 제안한다 |
+| 문제 표시 (`run.flag`) | 사람이 적용된 실행을 "문제였다"고 표시 | 자율 권한이 있는 액션의 실행이 표시되면 워커가 그 권한을 자동 회수한다 (SYSTEM `agent.revoke_grant`). `list_my_runs {flagged: true}` 로 표시된 실행과 이유(`flagged.note`)를 읽고 같은 실수를 반복하지 않는다 |
+| 기억 등급 `memory_trust` | propose(기본 — 제안은 `proposed`) · active(근거 2개 이상 · 외부 출처 아님이면 `active` 로 착지) | active 등급이어도 근거는 둘 이상, 외부 입력은 `tainted: true`. 활성 착지 기억이 14일에 2건 거절·정정되면 propose 로 자동 강등 |
+
+- 승인 대기 중인 요청도 승인 시점에 **현재 범위로 다시 검사**된다 — 그 사이 범위가 줄었으면 승인돼도 실행되지 않는다(`failed`).
+- 신뢰 지표는 모두 감사 로그(`action_runs`)에서 계산한다: 액션별 바로 적용 · 자율 적용 · 승인 · 거절 · 실패 · 거부 · 문제 표시, 승인률 = 승인 / (승인 + 거절), 기억 정밀도 = 확인 / (확인 + 거절 + 정정). `whoami.trust_30d` 로 내 지표를 볼 수 있다.
+- 사람 전용 액션: `agent.register` · `agent.configure` · `agent.grant` · `agent.revoke_grant` · `agent.set_memory_trust` · `run.flag` · `run.unflag`.
+
+```bash
+now whoami
+now run agent.configure '{"id":3}' --reason "…"   # → denied (사람 전용)
+```
 
 ### 기억 — AI 가 제안하고 사람이 확정한다
 
@@ -138,13 +161,14 @@ now cite 12 15
 | `GET /api/v1/actions` | list_actions |
 | `POST /api/v1/actions/{name}` `{"params":{…},"reason":"…"}` | run_action |
 | `GET /api/v1/runs` · `/runs/{id}` · `DELETE /runs/{id}` | 내 실행 · 조회 · 철회 |
-| `POST /api/v1/iac/snapshots` | IaC 감사 결과 수신 (`iac:audit` 이 사용 · 동결 모드 거부 · 활동 로그 기록) |
+| `POST /api/v1/iac/snapshots` | IaC 감사 결과 수신 (`iac:audit` 이 사용 · 허용 범위에 `iac.record_snapshot`(또는 `*`) 필요 · 동결 모드 거부 · 활동 로그 기록) |
 | `GET /api/health` | 인증 없음 |
 
 ## 5. 권장 에이전트 지침 (시스템 프롬프트에 넣기)
 
 ```
 너는 '<사업명>' 의 운영 에이전트다. Now MCP 도구만으로 일한다.
+0. whoami 로 역할 · 허용 액션 · 사업 범위 · 자율 권한을 확인하고 그 안에서만 일한다.
 1. get_overview → list_signals(severity=critical) 부터 처리한다.
 2. 쓰기 전에 get_object 로 현재 상태와 available_actions 를 확인한다.
 3. run_action 의 reason 에는 근거(어떤 메일·문자·일정에서 왔는지)를 한 문장으로 쓴다.

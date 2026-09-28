@@ -10,6 +10,7 @@ import { latestSnapshot } from "@/lib/repos/snapshots";
 import { dueTasks, taskCounts } from "@/lib/repos/tasks";
 import { addDays } from "@/lib/dates";
 import { computeSignals } from "./signals";
+import { autonomyStats } from "./trust";
 
 /** 기준일로부터 과거 n개월 'YYYY-MM' 목록 (오래된 순). */
 export function lastMonths(n: number, on = today()): string[] {
@@ -34,6 +35,8 @@ export function opsOverview(db: DB, scope: Scope, on = today()) {
     signals: computeSignals(db, scope, on),
     pending: { count: pendingCount(db), runs: listRuns(db, { status: "pending", limit: 20 }) },
     runs24h: runStats(db, since24h),
+    /** 자율도: 최근 7일 에이전트 쓰기 — 바로 적용 · 자율 권한 · 승인 후 적용 · 거절 */
+    autonomy: autonomyStats(db, new Date(Date.now() - 7 * 86_400_000).toISOString()),
     recentRuns: listRuns(db, { limit: 30 }),
     agents: {
       active: agents.filter((a) => a.status === "active").length,

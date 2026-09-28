@@ -4,6 +4,7 @@ import { StackedBars } from "@/components/charts";
 import { AutoRefresh } from "@/components/client";
 import { Icon } from "@/components/icons";
 import { ApprovalCard, RunTable } from "@/components/runs";
+import { AutonomyLine } from "@/components/trust";
 import { Actor, Empty, Metric, ObjectLink, PageHeader, Panel, SEVERITY, Tag, timeAgo } from "@/components/ui";
 import { currentScope } from "@/lib/context";
 import { daysBetween, formatDate } from "@/lib/dates";
@@ -65,6 +66,8 @@ export default async function OperationsPage({ searchParams }: { searchParams: S
           href="/system"
         />
       </div>
+
+      <AutonomyLine a={o.autonomy} />
 
       <div className="grid gap-px bg-void p-px xl:grid-cols-12">
         {/* 신호 큐 */}
