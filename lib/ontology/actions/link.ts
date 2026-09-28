@@ -118,7 +118,7 @@ export const linkActions = [
     humanOnly: true,
     fields: { name: f.choice("링크 유형", "link_types", { required: true }) },
     run({ db }, i) {
-      if ((SYSTEM_LINK_TYPES as readonly string[]).includes(String(i.name))) throw new ActionError(`'${i.name}' 는 시스템 링크 유형이라 삭제할 수 없습니다 (기억 계층이 사용)`);
+      if ((SYSTEM_LINK_TYPES as readonly string[]).includes(String(i.name))) throw new ActionError(`'${i.name}' 는 시스템 링크 유형이라 삭제할 수 없습니다 (기억·문서 계층이 사용)`);
       const n = (db.prepare("SELECT COUNT(*) AS n FROM links WHERE link_type = ?").get(i.name) as { n: number }).n;
       const r = db.prepare("DELETE FROM link_types WHERE name = ?").run(i.name);
       if (!r.changes) throw new ActionError("링크 유형을 찾을 수 없습니다");

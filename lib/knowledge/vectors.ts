@@ -218,6 +218,19 @@ export function knn(db: DB, space: Pick<EmbeddingSpace, "id" | "dim">, q: Float3
     .slice(0, k);
 }
 
+/** 저장된 벡터 (정규화 float) — 해시 → 벡터. 이 공간 것이 아니면(지문 불일치) 빈 결과. 큐레이터의 의미 중복 비교용 (질의 임베딩 없이) */
+export function vectorsFor(db: DB, space: Pick<EmbeddingSpace, "id" | "dim">, hashes: string[]): Map<string, Float32Array> {
+  const out = new Map<string, Float32Array>();
+  if (!hashes.length || space.dim <= 0 || !ownsSpace(db, space.id)) return out;
+  const uniq = [...new Set(hashes)];
+  for (let i = 0; i < uniq.length; i += 500) {
+    const part = uniq.slice(i, i + 500);
+    const rows = db.prepare(`SELECT content_hash AS hash, f FROM vec.vectors WHERE space_id = ? AND content_hash IN (${part.map(() => "?").join(",")})`).all(space.id, ...part) as { hash: string; f: Buffer }[];
+    for (const r of rows) out.set(r.hash, fromBlob(r.f));
+  }
+  return out;
+}
+
 // ── 정리 · 상태 ──────────────────────────────────────
 
 /**

@@ -474,4 +474,45 @@ export const migrations: string[] = [
     ('contradicts', '충돌', '충돌', 'memory', 'memory', 'many', '서로 모순되는 기억'),
     ('promoted_to', '승격됨', '승격 원본 기억', 'memory', '*', 'one', '이 기억이 구조화되어 옮겨간 객체');
   `,
+  // 7: 문서 종류 · 버전 (docs/MEMORY.md M4) — documents 테이블 대신 notes 에 종류·출처·오염·버전을 붙인다 (§14)
+  `
+  ALTER TABLE notes ADD COLUMN kind TEXT NOT NULL DEFAULT 'note' CHECK (kind IN ('note','playbook','episode','brief','source'));
+  ALTER TABLE notes ADD COLUMN source_uri TEXT NOT NULL DEFAULT '';   -- 'session:12' · 'https://…' · 'file:…'
+  ALTER TABLE notes ADD COLUMN tainted INTEGER NOT NULL DEFAULT 0;     -- 외부 비신뢰 입력에서 유래
+  ALTER TABLE notes ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
+
+  -- 이전 버전의 내용. changed_by · changed_at = 이 버전을 다음 버전으로 바꾼 행위자 · 시각
+  CREATE TABLE note_versions (
+    note_id    INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    version    INTEGER NOT NULL,
+    title      TEXT NOT NULL,
+    body       TEXT NOT NULL,
+    changed_by TEXT NOT NULL,
+    changed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    PRIMARY KEY (note_id, version)
+  );
+  CREATE INDEX notes_kind ON notes(kind, created_at);
+  -- 에피소드는 세션당 하나 (워커가 여러 프로세스로 돌아도 — document.record_episode 의 멱등 검사 뒤의 안전망)
+  CREATE UNIQUE INDEX notes_episode_source ON notes(source_uri) WHERE kind = 'episode';
+
+  -- 운영자가 이미 'mentions' 라는 사용자 링크 유형을 정의해 두었으면 '_user' 로 옮긴다 (마이그레이션 6 과 같은 방식)
+  INSERT INTO link_types (name, label, inverse_label, from_type, to_type, cardinality, description, created_at)
+    SELECT name || '_user', label, inverse_label, from_type, to_type, cardinality, description, created_at FROM link_types WHERE name = 'mentions';
+  UPDATE links SET link_type = 'mentions_user' WHERE link_type = 'mentions';
+  DELETE FROM link_types WHERE name = 'mentions';
+
+  INSERT INTO link_types (name, label, inverse_label, from_type, to_type, cardinality, description) VALUES
+    ('mentions', '언급', '언급된 문서', 'note', '*', 'many', '문서(에피소드·브리프)가 다루는 객체');
+  `,
+  // 8: 에피소드 기록 표식 — 워커는 "에피소드 문서가 없는 세션"이 아니라 "기록한 적 없는 세션"을 고른다.
+  // 사람이 에피소드를 지우면 다시 만들지 않는다 (다시 만들려면 사람이 document.record_episode 를 직접 실행).
+  // memory_uses 를 세션으로 찾는 조회(에피소드의 인용 기억)용 색인.
+  `
+  ALTER TABLE agent_sessions ADD COLUMN episode_recorded_at TEXT;
+  UPDATE agent_sessions SET episode_recorded_at = (
+    SELECT n.created_at FROM notes n WHERE n.kind = 'episode' AND n.source_uri = 'session:' || agent_sessions.id
+  ) WHERE EXISTS (SELECT 1 FROM notes n WHERE n.kind = 'episode' AND n.source_uri = 'session:' || agent_sessions.id);
+  CREATE INDEX agent_sessions_episode_pending ON agent_sessions(id) WHERE episode_recorded_at IS NULL AND status IN ('succeeded','failed');
+  CREATE INDEX memory_uses_session ON memory_uses(session_id, how);
+  `,
 ];

@@ -91,6 +91,7 @@ now events --follow --type signal.
 | `remember` | 기억 제안 (`memory.propose` 의 얇은 래퍼). `evidence` 1개 이상 · `reason` 필수. 결과 `status` 는 실행 상태, `memory_status` 는 기억 상태, `deduped` 면 기존 기억을 보강한 것, `conflicts` 는 충돌한 기억 |
 | `cite` | 팩 밖에서 찾아 쓴 기억의 사용 기록. 없는 id 는 `unknown` 으로 알려 준다 |
 | `list_memories` | 기억 목록 (상태·종류·대상). 뜻으로 찾을 때는 `recall(types: ["memory"])` — 대체·보관된 기억은 `include_inactive: true` 일 때만 |
+| `list_episodes` | 최근 에피소드(끝난 AI 세션의 결정적 요약) — `since`(ISO, 비우면 최근 7일) · `limit`(≤50) · `include_tainted`(기본 true). 결과 `{id, ref "note:N", title, created_at, session_id, tainted, excerpt(앞 600자)}`, 새 것 먼저. 기억 정리(큐레이터)의 원료 |
 
 `run_action` 결과 `status`:
 - `applied` 적용 · `pending` 사람 승인 대기 (get_run 으로 확인) · `failed` 입력/규칙 오류 (error 확인 후 수정) · `denied` 정책 거부 (사람에게 요청)
@@ -104,6 +105,19 @@ now events --follow --type signal.
 - 틀린 기억은 `memory.correct` (새 기억으로 대체, 이전 기억은 계보에 `superseded`). 에이전트가 **확인된** 기억을 정정·보관·합치면 고위험(가드 모드에서 승인 대기).
 - 사람 전용: `memory.record` · `confirm` · `reject` · `pin` · `resolve` · `promote`.
 - AI 런타임 세션은 시작할 때 팩을 시스템 프롬프트(로컬 CLI 는 stdin 앞)에 받고, 세션에 팩 해시와 항목이 남는다. 답에 `[mem:N]` 으로 인용하면 세션이 끝날 때 사용 기록(`cited`)이 된다 — `/ai/sessions/<id>` 의 "이 세션이 본 기억·문서"·"인용한 기억".
+
+### 문서 종류 — 플레이북 · 에피소드 · 외부 자료 (M4)
+
+- 문서(`note`)에는 종류가 있다: `note` · `playbook` · `episode` · `brief` · `source`. `recall` 결과의 문서 hit 에 `note_kind` 와 `tainted` 가 붙는다 (별도 `list_playbooks` 도구는 없다 — `recall(types: ["note"])` 로 절차를 찾는다).
+- **플레이북**은 AI 가 따르는 절차다. 본문의 `[[action:task.create]]` 가 액션 참조 (콘솔은 칩으로, 알 수 없는 이름은 경고). 컨텍스트 팩에서 다른 문서보다 먼저, `[playbook:ID]` 로 표시된다. **에이전트가 플레이북을 만들거나 고치면(다른 문서를 플레이북으로 바꾸는 것 포함) 고위험** — AI 행동을 바꾸는 문서라 가드 모드에서 승인 대기.
+- **에피소드**는 워커가 끝난 세션마다 만든다 (`list_episodes`). 에이전트는 만들지도 고치지도 못한다.
+- **외부 자료**는 `document.import {title, body(≤20만 자), source_uri?, business_id?, client_id?, tainted?}` — 외부 fetch 없이 받은 본문을 저장만 (low). 비밀값은 저장 전에 가린다. 에이전트가 가져오면 항상 `tainted` (사람은 끌 수 있다). 팩에서 "외부 출처·미검증"으로 표시되고, 이 문서를 근거로 한 기억도 tainted.
+- 제목·본문을 고치면 버전이 쌓인다 (`note_versions`). 되돌리기 `note.revert` 는 사람 전용.
+
+```bash
+now episodes --since 2026-09-27T00:00:00Z --text
+now run document.import '{"title":"Acme 보안 설문","body":"…","source_uri":"https://…"}' --reason "고객이 보낸 설문 원문"
+```
 
 ```bash
 now context --about CLT-0003 --task "갱신 제안서 작성" --text

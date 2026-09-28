@@ -16,8 +16,18 @@ import { PROVIDER_INFO } from "@/lib/ai/providers";
 
 type Values = Record<string, unknown>;
 
-function refOptions(db: DB, type: ObjectType, scope: Scope) {
-  return OBJECTS[type].list(db, type === "business" ? null : scope).map((r) => ({ value: r.ref.id, label: `${r.displayId} · ${r.title}` }));
+/** 에피소드는 세션마다 쌓인다 — 선택지에는 최근 것만 (지금 값은 항상 남긴다) */
+const RECENT_EPISODES = 20;
+
+function pickable(db: DB, type: ObjectType, scope: Scope, current?: number) {
+  const rows = OBJECTS[type].list(db, scope);
+  if (type !== "note") return rows;
+  let episodes = 0;
+  return rows.filter((r) => r.props.kind_key !== "episode" || r.ref.id === current || ++episodes <= RECENT_EPISODES);
+}
+
+function refOptions(db: DB, type: ObjectType, scope: Scope, current?: number) {
+  return pickable(db, type, type === "business" ? null : scope, current).map((r) => ({ value: r.ref.id, label: `${r.displayId} · ${r.title}` }));
 }
 
 function str(v: unknown): string {
@@ -66,7 +76,7 @@ function Input({ name, spec, value, db, scope, locked }: { name: string; spec: F
       return (
         <label className="flex h-7 items-center gap-2 text-fg-2">
           <input type="hidden" name={`__bool_${name}`} value="1" />
-          <input type="checkbox" name={name} defaultChecked={!!value} className="size-3.5 accent-primary" /> 예
+          <input type="checkbox" name={name} defaultChecked={value === undefined || value === null ? !!spec.checked : !!value && value !== "0" && value !== "false"} className="size-3.5 accent-primary" /> 예
         </label>
       );
     case "enum":
@@ -82,7 +92,7 @@ function Input({ name, spec, value, db, scope, locked }: { name: string; spec: F
       return (
         <select {...common} className="field" defaultValue={str(value)}>
           {(!spec.required || spec.nullable) && <option value="">— 없음 —</option>}
-          {refOptions(db, spec.ref!, scope).map((o) => (
+          {refOptions(db, spec.ref!, scope, Number(value) || undefined).map((o) => (
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </select>
@@ -109,7 +119,7 @@ function Input({ name, spec, value, db, scope, locked }: { name: string; spec: F
           {!spec.required && <option value="">—</option>}
           {types.map((t) => (
             <optgroup key={t} label={OBJECTS[t].plural}>
-              {OBJECTS[t].list(db, t === "business" || t === "agent" ? null : scope).map((r) => (
+              {pickable(db, t, t === "business" || t === "agent" ? null : scope, t === "note" ? Number(str(value).match(/^note:(\d+)$/)?.[1]) || undefined : undefined).map((r) => (
                 <option key={r.displayId} value={`${t}:${r.ref.id}`}>{r.displayId} · {r.title}</option>
               ))}
             </optgroup>

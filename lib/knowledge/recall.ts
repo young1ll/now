@@ -44,6 +44,8 @@ export type RecallHit = {
   similarity?: number;
   /** 기억이면 원래 상태·오염 여부 (점수에 상태 가중이 곱해져 있다) */
   memory?: { status: string; tainted: boolean; kind: string };
+  /** 문서면 종류(note · playbook · episode · brief · source)·오염 여부 (오염이면 점수 ×0.7) */
+  note?: { kind: string; tainted: boolean };
 };
 
 export type RecallResult = {
@@ -320,7 +322,8 @@ function graphExpand(db: DB, seeds: Ref[]): GraphCand[] {
       // (대상 + 근거로 두 번 이어진 기억이 고객의 실제 관계보다 앞서거나, 허브 고객의 기억들이 관계 목록을 채우지 않도록)
       if (other.type === "memory" && memSeen.has(other.id)) continue;
       if (other.type === "memory") memSeen.add(other.id);
-      const w = EDGE_WEIGHT[e.source] * (other.type === "memory" ? MEMORY_EDGE : 1);
+      // 에피소드의 언급(mentions)도 약하게 — 세션 기록은 여러 객체를 스쳐 가므로 구조적 관계가 아니다
+      const w = EDGE_WEIGHT[e.source] * (other.type === "memory" || e.linkType === "mentions" ? MEMORY_EDGE : 1);
       if (!w) continue;
       // 사업은 거의 모든 객체와 연결된 허브 — 관계 신호가 아니라 범위(scope)다
       if (other.type === "business") continue;
@@ -350,6 +353,17 @@ export const TAINT_WEIGHT = 0.7;
 const INACTIVE = new Set(["superseded", "retired"]);
 
 type MemState = { status: string; tainted: number; kind: string };
+
+type NoteState = { kind: string; tainted: number };
+
+function noteStates(db: DB, ids: number[]): Map<number, NoteState> {
+  const out = new Map<number, NoteState>();
+  for (let i = 0; i < ids.length; i += 500) {
+    const part = ids.slice(i, i + 500);
+    for (const r of db.prepare(`SELECT id, kind, tainted FROM notes WHERE id IN (${part.map(() => "?").join(",")})`).all(...part) as (NoteState & { id: number })[]) out.set(r.id, r);
+  }
+  return out;
+}
 
 function memoryStates(db: DB, ids: number[]): Map<number, MemState> {
   const out = new Map<number, MemState>();
@@ -436,6 +450,9 @@ export async function recall(db: DB, q: RecallQuery, o: RecallOpts = {}): Promis
     }
     v.score *= (MEMORY_STATUS_WEIGHT[m.status] ?? 0.5) * (m.tainted ? TAINT_WEIGHT : 1);
   }
+  // 문서: 외부 자료·미검증 에피소드는 오염 가중 (기억과 같은 ×0.7)
+  const notes = noteStates(db, [...fused.values()].filter((v) => v.ref.type === "note").map((v) => v.ref.id));
+  for (const v of fused.values()) if (v.ref.type === "note" && notes.get(v.ref.id)?.tainted) v.score *= TAINT_WEIGHT;
 
   // 표시 정보 · 범위 · 유형 필터 (그래프로 들어온 객체도 같은 규칙)
   const ranked = [...fused.entries()].sort((a, b) => b[1].score - a[1].score || a[0].localeCompare(b[0]));
@@ -473,6 +490,7 @@ export async function recall(db: DB, q: RecallQuery, o: RecallOpts = {}): Promis
       via: g && !l && !sm ? { from: viaNode ? `${viaNode.displayId} ${viaNode.title}` : g.via.from, label: g.via.label } : undefined,
       similarity: sm ? Math.round(sm.sim * 1000) / 1000 : undefined,
       ...(v.ref.type === "memory" && mems.has(v.ref.id) ? { memory: { status: mems.get(v.ref.id)!.status, tainted: !!mems.get(v.ref.id)!.tainted, kind: mems.get(v.ref.id)!.kind } } : {}),
+      ...(v.ref.type === "note" && notes.has(v.ref.id) ? { note: { kind: notes.get(v.ref.id)!.kind, tainted: !!notes.get(v.ref.id)!.tainted } } : {}),
     });
   }
   return {

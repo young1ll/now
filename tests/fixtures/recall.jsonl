@@ -25,3 +25,4 @@
 {"q": "세금계산서 발행 선호", "expect": [{"type": "memory", "title": "한빛상사는 세금계산서를 월말에"}], "kind": "memory"}
 {"q": "Acme SSO 요구 기억", "expect": [{"type": "memory", "title": "SSO(SAML) 지원을 요구"}], "kind": "memory"}
 {"q": "카페 온도 규모 기억", "expect": [{"type": "memory", "title": "카페 온도는 월 매출"}], "kind": "memory"}
+{"q": "미수금 독촉 절차", "expect": [{"type": "note", "title": "미수금 독촉 플레이북"}], "kind": "lexical"}

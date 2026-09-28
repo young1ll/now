@@ -59,6 +59,7 @@ MATCH p=(:Client)-[:REFERRED_BY*1..3]->(:Client) RETURN p
 | evidenced_by | memory → * | 시스템 (기억) |
 | contradicts | memory → memory | 시스템 (기억) — `memory.*` 액션만 |
 | promoted_to | memory → * (하나) | 시스템 (기억) — `memory.promote` 만 |
+| mentions | note → * | 시스템 (문서) — 에피소드가 다루는 객체, `document.record_episode` 가 만든다 |
 
 ## 기억(memory) — 8번째 객체 유형 (v0.4 M3)
 
@@ -69,7 +70,25 @@ MATCH p=(:Client)-[:REFERRED_BY*1..3]->(:Client) RETURN p
 - **속성**: statement · kind(fact/preference/lesson/procedure_hint/caution) · status · confidence · origin(human/agent/…) · tainted(외부 비신뢰 출처) · pinned · valid_from/valid_to · use_count · last_used_at
 - **관계**는 1급 링크를 재사용한다: `about`(무엇에 관한가) · `evidenced_by`(근거) · `contradicts`(충돌 상대) · `promoted_to`(구조화된 대체물).
 - **도착 유형 `*`**: 링크 유형의 `to_type` 이 `*` 이면 아무 객체나 도착점이 된다. `link.create` 는 `to_type !== "*"` 일 때만 도착 유형을 검사한다. `link_type.define` 도 `*` 를 받는다.
-- **시스템 링크 유형** 4종은 `link_type.delete` 로 지울 수 없다. `contradicts` · `promoted_to` 는 기억 상태와 함께 움직이므로 `link.create` 로 직접 만들 수 없다 (`about` · `evidenced_by` 는 가능 — 오염된 기억을 `evidenced_by` 로 붙이면 출발 기억도 tainted). 업그레이드 전에 같은 이름의 사용자 유형이 있었으면 마이그레이션 6 이 `<이름>_user` 로 옮긴다.
+- **시스템 링크 유형** 5종(기억 4 + 문서 `mentions`)은 `link_type.delete` 로 지울 수 없다. `contradicts` · `promoted_to` 는 기억 상태와 함께 움직이므로 `link.create` 로 직접 만들 수 없다 (`about` · `evidenced_by` 는 가능 — 오염된 기억을 `evidenced_by` 로 붙이면 출발 기억도 tainted). 업그레이드 전에 같은 이름의 사용자 유형이 있었으면 마이그레이션 6 이 `<이름>_user` 로 옮긴다.
 - 객체를 지우면 삭제 액션의 `deleteLinksFor` 가 about·근거 링크를 정리한다. 기억 자체는 남는다 (화면에 "대상 없음").
 - 기억과의 링크는 다른 객체의 **검색 카드에 넣지 않는다** (기억 문장이 대상 카드로 복제되면 보관된 기억도 대상 카드로 검색된다). 대신 대상의 이름이 바뀌면 그 대상을 가리키는 기억 카드가 증분 색인에서 다시 만들어진다.
 - 객체 화면(`/o/<type>/<id>`)의 **"AI 가 아는 것"** 패널이 그 객체에 관한 기억을 상태와 함께 보여 준다. 기억 자체의 화면은 `/memory` (열 기반) — `/o/memory/<id>` 는 그리로 보낸다.
+
+## 문서 종류 (v0.4 M4)
+
+문서(`note`, `DOC-0001`)는 `kind` 로 역할을 나눈다 — 별도 `documents` 테이블 없이 같은 객체 유형 (이유는 [MEMORY.md §14](MEMORY.md#14-m4-구현-기록-v04)).
+
+| kind | 라벨 | 누가 만드나 | 비고 |
+|---|---|---|---|
+| `note` | 문서 | 누구나 | SOP·체크리스트·리서치 (기본) |
+| `playbook` | 플레이북 | 사람 · 에이전트(고위험) | AI 가 따르는 절차. 본문의 `[[action:이름]]` 이 액션 참조. 컨텍스트 팩에서 먼저 · `[playbook:ID]` |
+| `episode` | 에피소드 | 워커만 (`document.record_episode`, SYSTEM) | 끝난 AI 세션의 결정적 요약. `source_uri = 'session:<id>'`, 세션당 하나 |
+| `brief` | 브리프 | 누구나 | 보고·브리핑 같은 AI 산출물 |
+| `source` | 외부 자료 | `document.import` · 누구나 | 비신뢰 입력 — 에이전트가 만들면 항상 `tainted` |
+
+- 속성 추가: `kind` · `source_uri`(외부 원본 — `session:12` · `https://…` · `file:…`) · `tainted`(외부 출처·미검증) · `version`.
+- **버전**: 제목·본문이 바뀔 때마다 이전 내용이 `note_versions`(note_id, version, title, body, changed_by, changed_at)에 쌓이고 `version + 1`. `note.revert {id, version}`(사람 전용)도 새 버전이다. 문서를 지우면 이력도 함께 지워진다.
+- **오염**: tainted 문서를 근거(`evidenced_by`)로 한 기억은 tainted (M3 의 기억 → 기억 오염 상속을 문서로 확장). recall 점수 ×0.7, 팩 표시 "외부 출처·미검증".
+- **`mentions`** (note → *): 에피소드가 다루는 객체 — 그 세션이 실행한 액션들의 대상. 언급된 쪽의 검색 카드에는 넣지 않는다 (에피소드가 쌓일 때마다 고객·업무 카드가 바뀌어 재색인·재임베딩되지 않도록). 그래프 확장에서는 기억 이웃처럼 약하게(×0.3).
+- 화면: `/o/note` 종류 탭 · "외부 자료 가져오기", 문서 화면의 외부 출처 경고 · 에피소드(세션 링크 · 언급 객체) · 플레이북(참조 액션 칩 · 컨텍스트 팩에 들어간 세션 수·성공 수) · 버전 이력(되돌리기).

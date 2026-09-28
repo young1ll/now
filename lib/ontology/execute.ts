@@ -8,6 +8,7 @@ import { formatZodError } from "./fields";
 import { getObject } from "./objects";
 import { decide } from "./policy";
 import { getAgent } from "@/lib/repos/agents";
+import { redactSecrets } from "@/lib/knowledge/redact";
 import { ActionError, type Actor, type Ref } from "./types";
 
 export type ExecuteRequest = {
@@ -41,6 +42,13 @@ export function getAction(name: string): AnyAction | undefined {
   return Object.hasOwn(ACTIONS, name) ? ACTIONS[name] : undefined;
 }
 
+/** def.secretFields 의 문자열 값에서 비밀값을 가린다 — 감사·승인 대기·실행 모두 이 값을 쓴다 (CLAUDE.md: 비밀값은 감사 결과에 남기지 않는다) */
+export function scrubSecrets(def: AnyAction, params: unknown): unknown {
+  const keys = def.secretFields;
+  if (!keys?.length || !params || typeof params !== "object" || Array.isArray(params)) return params;
+  return Object.fromEntries(Object.entries(params as Record<string, unknown>).map(([k, v]) => [k, keys.includes(k) && typeof v === "string" ? redactSecrets(v) : v]));
+}
+
 function parse(def: AnyAction, params: unknown): Record<string, unknown> {
   const r = def.schema.safeParse(params ?? {});
   if (!r.success) throw new ActionError(formatZodError(r.error as z.ZodError, def.fields));
@@ -71,14 +79,15 @@ export function executeAction(db: DB, req: ExecuteRequest): ExecuteResult {
     return record({ action: req.action, actor, risk: "high", status: "failed", params: req.params, reason: req.reason, error: `알 수 없는 액션: ${req.action}` });
   }
 
+  const params = scrubSecrets(def, req.params);
   let input: Record<string, unknown>;
   let risk: "low" | "high";
   try {
-    input = parse(def, req.params);
-    risk = resolveRisk(def, db, input);
+    input = parse(def, params);
+    risk = resolveRisk(def, db, input, actor);
   } catch (e) {
     if (!isAgent || !(e instanceof ActionError)) throw e;
-    return record({ action: def.name, actor, risk: "low", status: "failed", params: req.params, reason: req.reason, error: e.message });
+    return record({ action: def.name, actor, risk: "low", status: "failed", params, reason: req.reason, error: e.message });
   }
 
   const target = targetRef(def, input);

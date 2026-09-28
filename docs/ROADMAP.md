@@ -20,7 +20,7 @@
 - [x] M1 검색 기반: 청크·객체 카드, 하이브리드 `recall` (FTS + 그래프), 골든셋 `eval:recall`, `/search` · MCP `recall` · `now recall`
 - [x] M2 벡터: sqlite-vec (bit→float 재정렬), 로컬 우선 임베딩(Ollama · OpenAI · Gemini · Voyage · OpenAI 호환), 임베딩 공간 교체, 색인 비밀값 가림, `eval:recall --embed-url · --vec-bench`
 - [x] M3 기억: `memory` 객체 · 상태 기계 · 액션 10종 · 어휘 중복/숫자 충돌 · 오염 상속 · 컨텍스트 팩(세션 해시·인용 추적) · `/memory` · "AI 가 아는 것" · MCP `get_context`·`remember`·`cite`·`list_memories` · `now context`·`remember`·`memories`
-- [ ] M4 큐레이터: 에피소드 요약 · 기억 추출/병합/만료 · 승격 제안 · 플레이북
+- [x] M4 큐레이터: 문서 종류·버전(`notes.kind` · `note_versions`) · 외부 자료 가져오기 · 에피소드(결정적 세션 요약, 워커) · 플레이북(`[[action:…]]`, 팩 우선) · 결정적 큐레이터(미사용·유효기간 만료 · 의미 중복 합치기 · 승격 후보 신호 · `curator.ran`) · LLM 큐레이터(야간 트리거 + `list_episodes`) · 사용 기록 정밀도
 - [ ] M5 신뢰: 에이전트 역할·범위, 기억 신뢰도, 자동 착지
 
 ## 그 다음

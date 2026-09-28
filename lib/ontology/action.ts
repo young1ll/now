@@ -16,12 +16,20 @@ export type ActionDef<S extends Fields = Fields> = {
   /** 이 액션이 속한 객체 유형 (카탈로그 분류) */
   objectType: ObjectType | "system";
   fields: S;
-  /** low: 즉시 실행 가능 / high: 외부 발송·삭제·금액 기록 → 가드 모드에서 승인 필요 */
-  risk: Risk | ((db: DB, input: InputOf<S>) => Risk);
+  /**
+   * low: 즉시 실행 가능 / high: 외부 발송·삭제·금액 기록 → 가드 모드에서 승인 필요.
+   * 함수면 (db, input, actor) — 행위자에 따라 다른 경우(에이전트가 플레이북을 고치면 high)에 actor 를 본다.
+   */
+  risk: Risk | ((db: DB, input: InputOf<S>, actor: Actor) => Risk);
   /** 사람만 실행 가능 (에이전트 관리, AI 모드 변경 등) */
   humanOnly?: boolean;
   /** 감사 기록에 남기지 않을 파라미터 (URL 에 비밀이 든 웹훅 등). humanOnly 액션에만 쓴다 — 승인 재실행에 원본이 필요 없도록 */
   redact?: string[];
+  /**
+   * 비밀값을 가릴 문자열 파라미터 (외부 본문을 받는 액션 — document.import). 검증 전에 redactSecrets 를 적용해
+   * 감사 기록(params) · 승인 대기 · 실행이 모두 가린 값만 본다. 원문은 어디에도 남지 않는다.
+   */
+  secretFields?: string[];
   /** 트랜잭션 밖에서 실행해야 하는 액션 (VACUUM INTO 백업 등) */
   noTransaction?: boolean;
   /** 기존 객체를 대상으로 하는 액션이면 대상 유형과 id 파라미터 */
@@ -39,8 +47,11 @@ export function defineAction<S extends Fields>(def: ActionDef<S>): AnyAction {
   return { ...(def as unknown as ActionDef<Fields>), schema: objectSchema(def.fields) as z.ZodType<Record<string, unknown>> };
 }
 
-export function resolveRisk(def: AnyAction, db: DB, input: Record<string, unknown>): Risk {
-  return typeof def.risk === "function" ? def.risk(db, input as never) : def.risk;
+/** actor 를 모르면(화면의 위험도 표시 등) 에이전트로 본다 — 더 엄격한 쪽 */
+const AGENT_VIEW: Actor = { type: "agent", id: "", name: "" };
+
+export function resolveRisk(def: AnyAction, db: DB, input: Record<string, unknown>, actor: Actor = AGENT_VIEW): Risk {
+  return typeof def.risk === "function" ? def.risk(db, input as never, actor) : def.risk;
 }
 
 export function targetRef(def: AnyAction, input: Record<string, unknown>): Ref | undefined {

@@ -3,7 +3,7 @@
 // (바뀔 때마다 재색인·재임베딩 비용이 들고, 검색 신호로는 잡음이다).
 import crypto from "node:crypto";
 import type { DB } from "@/lib/db";
-import { CLIENT_KIND, CLIENT_STATUS, INTERACTION_KIND, INVOICE_STATUS, MEMORY_KIND, MEMORY_ORIGIN, MEMORY_STATUS, PRIORITY, RECURRENCE, TASK_STATUS } from "@/lib/labels";
+import { CLIENT_KIND, CLIENT_STATUS, INTERACTION_KIND, INVOICE_STATUS, MEMORY_KIND, MEMORY_ORIGIN, MEMORY_STATUS, NOTE_KIND, PRIORITY, RECURRENCE, TASK_STATUS } from "@/lib/labels";
 import { displayId } from "@/lib/ontology/ids";
 import { OBJECTS } from "@/lib/ontology/objects";
 import { creatorName } from "@/lib/repos/memories";
@@ -72,8 +72,10 @@ function customLinks(db: DB, type: ObjectType): Map<number, CustomLink[]> {
       `SELECT l.*, t.label, t.inverse_label FROM links l JOIN link_types t ON t.name = l.link_type
        WHERE l.from_type = ? OR l.to_type = ?`,
     )
-    .all(type, type) as { from_type: ObjectType; from_id: number; to_type: ObjectType; to_id: number; label: string; inverse_label: string; note: string }[])
-    .filter((r) => type === "memory" || (r.from_type !== "memory" && r.to_type !== "memory"));
+    .all(type, type) as { link_type: string; from_type: ObjectType; from_id: number; to_type: ObjectType; to_id: number; label: string; inverse_label: string; note: string }[])
+    .filter((r) => type === "memory" || (r.from_type !== "memory" && r.to_type !== "memory"))
+    // 언급(mentions)은 문서 쪽 카드에만 — 에피소드가 쌓일 때마다 언급된 고객·업무 카드가 바뀌면 재색인·재임베딩이 끝없다
+    .filter((r) => r.link_type !== "mentions" || r.from_type === type);
   const refs: Ref[] = rows.flatMap((r) => [{ type: r.from_type, id: r.from_id }, { type: r.to_type, id: r.to_id }]);
   const titles = titlesOf(db, refs);
   const out = new Map<number, CustomLink[]>();
@@ -81,7 +83,7 @@ function customLinks(db: DB, type: ObjectType): Map<number, CustomLink[]> {
   for (const r of rows) {
     const name = (x: Ref) => `${displayId(x.type, x.id)} ${titles.get(`${x.type}:${x.id}`) ?? ""}`.trim();
     if (r.from_type === type) push(r.from_id, { label: r.label, other: name({ type: r.to_type, id: r.to_id }), note: r.note });
-    if (r.to_type === type) push(r.to_id, { label: r.inverse_label, other: name({ type: r.from_type, id: r.from_id }), note: r.note });
+    if (r.to_type === type && r.link_type !== "mentions") push(r.to_id, { label: r.inverse_label, other: name({ type: r.from_type, id: r.from_id }), note: r.note });
   }
   return out;
 }
@@ -202,7 +204,17 @@ export function renderOwners(db: DB, type: ObjectType, ids?: number[]): Map<numb
       for (const n of q("SELECT x.*, b.name AS business, c.name AS client FROM notes x LEFT JOIN businesses b ON b.id = x.business_id LEFT JOIN clients c ON c.id = x.client_id")) {
         const title = String(n.title);
         put(n.id, (n.business_id as number | null) ?? null, [
-          join([header(type, n.id, title, n.pinned ? "고정" : undefined), line("사업", n.business ?? "공용"), line("고객", named(n.client, "client", n.client_id)), line("태그", n.tags), ...linkLines(n.id)]),
+          join([
+            header(type, n.id, title, n.pinned ? "고정" : undefined),
+            // 종류·출처는 기본 문서(note)가 아닐 때만 — 기존 문서의 카드(해시)는 M3 와 같다
+            n.kind !== "note" ? line("종류", NOTE_KIND[n.kind as keyof typeof NOTE_KIND] ?? n.kind) : null,
+            line("사업", n.business ?? "공용"),
+            line("고객", named(n.client, "client", n.client_id)),
+            line("태그", n.tags),
+            line("출처", n.source_uri),
+            n.tainted ? "외부 출처(미검증)" : null,
+            ...linkLines(n.id),
+          ]),
           ...splitSections(title, String(n.body)),
         ]);
       }

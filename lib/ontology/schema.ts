@@ -50,6 +50,10 @@ export const PROPERTIES: Record<ObjectType, PropertyDef[]> = {
     { key: "body", label: "본문", type: "text", description: "마크다운" },
     { key: "tags", label: "태그", type: "tags" },
     { key: "pinned", label: "고정", type: "boolean" },
+    { key: "kind", label: "종류", type: "enum", description: "note | playbook | episode | brief | source — playbook 은 AI 가 따르는 절차([[action:이름]] 참조), episode 는 워커가 만든 세션 요약, source 는 외부 자료" },
+    { key: "source_uri", label: "출처", type: "string", description: "외부 원본 — session:12 (에피소드) · https://… · file:…" },
+    { key: "tainted", label: "외부 출처(미검증)", type: "boolean", description: "비신뢰 입력에서 유래 — 이 문서를 근거로 한 기억도 미검증" },
+    { key: "version", label: "버전", type: "number", description: "제목·본문이 바뀔 때마다 +1 (이전 내용은 note_versions)" },
   ],
   agent: [
     { key: "name", label: "이름", type: "string" },
@@ -117,10 +121,11 @@ export const DERIVED_LINKS: LinkTypeDef[] = [
 ];
 
 /**
- * 시스템 링크 유형 — 기억 계층이 의존한다 (마이그레이션 6). link_type.delete 로 지울 수 없다.
+ * 시스템 링크 유형 — 기억 계층(마이그레이션 6)과 문서 계층(마이그레이션 7: mentions)이 의존한다. link_type.delete 로 지울 수 없다.
  * contradicts · promoted_to 는 기억 상태와 함께 움직이므로 memory.* 액션으로만 만든다 (link.create 거부).
+ * mentions 는 document.record_episode 가 만든다 (문서 → 다루는 객체, link.create 도 가능).
  */
-export const SYSTEM_LINK_TYPES = ["about", "evidenced_by", "contradicts", "promoted_to"] as const;
+export const SYSTEM_LINK_TYPES = ["about", "evidenced_by", "contradicts", "promoted_to", "mentions"] as const;
 export const ACTION_MANAGED_LINK_TYPES: readonly string[] = ["contradicts", "promoted_to"];
 
 type CustomRow = {

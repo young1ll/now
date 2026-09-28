@@ -47,6 +47,8 @@ export type AgentSession = {
   context_hash: string | null;
   /** 팩 항목 ref ("memory:12", "note:1" …) */
   context_refs: string[];
+  /** 에피소드를 기록한 시각 (document.record_episode) — 사람이 에피소드를 지워도 남아 워커가 다시 만들지 않는다 */
+  episode_recorded_at: string | null;
 };
 
 type SessionRow = Omit<AgentSession, "transcript" | "usage" | "context_refs"> & { transcript: string; usage: string; context_refs: string };

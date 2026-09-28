@@ -36,19 +36,33 @@ export function sessionSubject(db: DB, s: Pick<AgentSession, "trigger_run_id">):
 }
 
 /**
- * 세션 시작 때 컨텍스트 팩을 만들고 세션에 해시·항목을 남긴다. 팩의 기억은 사용 기록(context).
+ * 세션 시작 때 컨텍스트 팩을 만들고 세션에 해시·항목을 남긴다 (무엇을 보여주려 했는지 — why-탐색기).
  * 팩 생성 실패는 세션을 막지 않는다 — recall 이 벡터 장애를 이미 강등하고, 그 밖의 예외면 팩 없이 진행.
+ * 팩 기억의 사용 기록(context)은 여기서 하지 않는다 — 실제로 모델에 전달된 뒤 recordPackUse 가 한다.
  */
-async function sessionContext(db: DB, s: AgentSession, actor: Actor, opts: RunOpts): Promise<ContextPack | undefined> {
+async function sessionContext(db: DB, s: AgentSession, opts: RunOpts): Promise<ContextPack | undefined> {
   try {
     const about = sessionSubject(db, s);
     const pack = await buildContext(db, { about: about ? [about] : [], task: s.prompt.slice(0, 500), fetchImpl: opts.fetchImpl, env: opts.env });
     saveSessionContext(db, s.id, pack.items.length ? pack.hash : null, pack.items.map((i) => refKey(i.ref)));
-    recordMemoryUse(db, pack.items.filter((i) => i.kind === "memory").map((i) => i.ref.id), { sessionId: s.id, actor: actorKey(actor), how: "context" });
     return pack;
   } catch (e) {
     console.error("[now-ai] 컨텍스트 팩 생성 실패 — 팩 없이 진행", e);
     return undefined;
+  }
+}
+
+/**
+ * 팩의 기억 → 사용 기록(context). 첫 LLM 응답을 받은 뒤(command 공급자는 프로세스가 0 으로 끝난 뒤)에만 부른다 —
+ * 키 없음·명령 비허용 같은 설정 오류로 모델에 한 번도 가지 않은 세션이 사용으로 세어지면, 매일 실패하는 스케줄 세션이
+ * 고정 기억의 사용 수를 부풀려 승격 후보가 거짓으로 뜬다 (M4 §6.5).
+ */
+function recordPackUse(db: DB, sessionId: number, actor: Actor, pack: ContextPack | undefined) {
+  if (!pack) return;
+  try {
+    recordMemoryUse(db, pack.items.filter((i) => i.kind === "memory").map((i) => i.ref.id), { sessionId, actor: actorKey(actor), how: "context" });
+  } catch (e) {
+    console.error("[now-ai] 팩 사용 기록 실패", e);
   }
 }
 
@@ -76,17 +90,18 @@ export async function executeSession(db: DB, sessionId: number, opts: RunOpts = 
   const agent = getAgent(db, profile.agent_id);
   if (!agent || agent.status !== "active") return fail("프로필의 에이전트가 정지·폐기 상태입니다");
   const actor: Actor = { type: "agent", id: String(agent.id), name: agent.name };
-  const pack = await sessionContext(db, session, actor, opts);
+  const pack = await sessionContext(db, session, opts);
+  const delivered = () => recordPackUse(db, sessionId, actor, pack);
 
   try {
-    if (profile.provider === "command") return await runCommand(db, sessionId, profile, agent.id, transcript, opts, pack?.text ?? "");
-    return await runLoop(db, sessionId, session, profile, agent.id, actor, transcript, opts, pack?.text ?? "");
+    if (profile.provider === "command") return await runCommand(db, sessionId, profile, agent.id, transcript, opts, pack?.text ?? "", delivered);
+    return await runLoop(db, sessionId, session, profile, agent.id, actor, transcript, opts, pack?.text ?? "", delivered);
   } finally {
     recordCitations(db, sessionId, actor, transcript, getSession(db, sessionId)?.final_text ?? "");
   }
 }
 
-async function runLoop(db: DB, sessionId: number, session: AgentSession, profile: AiProfile, agentId: number, actor: Actor, transcript: TranscriptEntry[], opts: RunOpts, pack: string) {
+async function runLoop(db: DB, sessionId: number, session: AgentSession, profile: AiProfile, agentId: number, actor: Actor, transcript: TranscriptEntry[], opts: RunOpts, pack: string, delivered: () => void) {
   const agent = { id: agentId };
   let steps = 0;
   let toolCalls = 0;
@@ -106,6 +121,8 @@ async function runLoop(db: DB, sessionId: number, session: AgentSession, profile
       }
       steps++;
       const r = await adapter.step();
+      // 첫 응답을 받았다 = 팩이 모델에 전달됐다
+      if (steps === 1) delivered();
       usage.input += r.usage?.input ?? 0;
       usage.output += r.usage?.output ?? 0;
       transcript.push({ role: "assistant", text: r.text, ...(r.toolCalls.length ? { tool_calls: r.toolCalls.map(({ id, name, args }) => ({ id, name, args })) } : {}) });
@@ -157,7 +174,7 @@ export function commandEnv(p: AiProfile, base: Record<string, string | undefined
  * 환경변수는 허용 목록만, 작업 디렉터리는 세션별 임시 폴더, 시간 초과 시 프로세스 그룹 전체 종료.
  * 프롬프트는 stdin, 접속 정보는 NOW_URL · NOW_MCP_URL · NOW_AGENT_TOKEN(세션 동안만 유효한 단기 토큰).
  */
-async function runCommand(db: DB, sessionId: number, p: AiProfile, agentId: number, transcript: TranscriptEntry[], opts: RunOpts, pack = "") {
+async function runCommand(db: DB, sessionId: number, p: AiProfile, agentId: number, transcript: TranscriptEntry[], opts: RunOpts, pack = "", delivered: () => void = () => {}) {
   const baseEnv = opts.env ?? process.env;
   if (baseEnv.NOW_ALLOW_COMMAND_PROVIDER !== "1" && process.env.NOW_ALLOW_COMMAND_PROVIDER !== "1") {
     saveSession(db, sessionId, { status: "failed", error: "로컬 CLI 에이전트는 NOW_ALLOW_COMMAND_PROVIDER=1 일 때만 실행됩니다 (서버 권한으로 셸을 실행하므로)", transcript, finished: true });
@@ -219,6 +236,7 @@ async function runCommand(db: DB, sessionId: number, p: AiProfile, agentId: numb
     transcript.push({ role: "assistant", text: clip(stdout) });
     if (stderr.trim()) transcript.push({ role: "system", text: `stderr:\n${clip(stderr, 4000)}` });
     const ok = code === 0 && !timedOut;
+    if (ok) delivered();
     saveSession(db, sessionId, {
       status: ok ? "succeeded" : "failed",
       final_text: stdout.trim().slice(-4000),

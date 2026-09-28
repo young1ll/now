@@ -9,6 +9,7 @@ import {
   INACTIVE_STATUSES, LIVE_STATUSES, MEMORY_KINDS, type Memory, type MemoryStatus, actorKey, addMemoryLink, getMemory, insertMemory, memoryLinks,
   moveMemoryLinks, removeContradiction, updateMemory,
 } from "@/lib/repos/memories";
+import { getNote } from "@/lib/repos/notes";
 import type { RunResult } from "@/lib/repos/runs";
 import { type ActionCtx, defineAction } from "../action";
 import { f } from "../fields";
@@ -219,9 +220,9 @@ function resolveBusiness(db: DB, given: number | null | undefined, about: Ref[])
   return ids.size === 1 ? [...ids][0] : null;
 }
 
-/** 근거 중 오염된 기억이 있으면 오염을 물려받는다 */
+/** 근거 중 오염된 기억·문서(외부 자료·미검증 에피소드)가 있으면 오염을 물려받는다 */
 export function inheritsTaint(db: DB, evidence: Ref[]): boolean {
-  return evidence.some((r) => r.type === "memory" && !!getMemory(db, r.id)?.tainted);
+  return evidence.some((r) => (r.type === "memory" ? !!getMemory(db, r.id)?.tainted : r.type === "note" ? !!getNote(db, r.id)?.tainted : false));
 }
 
 /**

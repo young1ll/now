@@ -7,15 +7,19 @@ import { RunTable } from "@/components/runs";
 import { Callout, Empty, ObjectLink, PageHeader, PropertyList, Tag, fmtTime, timeAgo } from "@/components/ui";
 import { currentScope } from "@/lib/context";
 import { db } from "@/lib/db";
+import { lastCuratorRun } from "@/lib/knowledge/curator";
 import { recall } from "@/lib/knowledge/recall";
+import { promotionSignal, useSince } from "@/lib/ontology/signals";
+import { today } from "@/lib/dates";
 import { MEMORY_KIND, MEMORY_ORIGIN, MEMORY_STATUS, type Tone } from "@/lib/labels";
 import { memoryActionsFor } from "@/lib/ontology/actions/memory";
+import { getAction } from "@/lib/ontology/execute";
 import { nodeInfo } from "@/lib/ontology/graph";
 import { displayId } from "@/lib/ontology/ids";
 import { type Ref, refKey } from "@/lib/ontology/types";
 import { type SearchParams, one } from "@/lib/params";
 import {
-  LIVE_STATUSES, MEMORY_KINDS, type MemoryRow, type MemoryStatus, creatorName, getMemory, lineage, listMemories, listMemoryUses, memoriesAbout, memoryLinks, memoryStats,
+  LIVE_STATUSES, MEMORY_KINDS, type MemoryRow, type MemoryStatus, creatorName, effectiveUses, getMemory, lineage, listMemories, listMemoryUses, memoriesAbout, memoryLinks, memoryStats,
 } from "@/lib/repos/memories";
 import { listRuns } from "@/lib/repos/runs";
 
@@ -48,6 +52,7 @@ export default async function MemoryPage({ searchParams }: { searchParams: Searc
     rows = listMemories(d, scope, { status: tab.statuses, kind });
   }
   const stats = memoryStats(d, scope);
+  const curator = lastCuratorRun(d);
   const count = (t: (typeof TABS)[number]) => t.statuses.reduce((s, x) => s + stats[x], 0);
 
   const path = "/memory";
@@ -90,6 +95,7 @@ export default async function MemoryPage({ searchParams }: { searchParams: Searc
             <span className={`mono font-semibold ${cls}`}>{n}</span>
           </div>
         ))}
+        <CuratorStatus run={curator} />
       </div>
       <Columns storageKey="memory" defaults={[440, 0, 380]} grow={1}>
         <Column
@@ -213,6 +219,7 @@ function MemoryDetail({ id, path, query, here }: { id: number; path: string; que
           <MemoryActions m={m} actions={memoryActionsFor(m.status, !!m.pinned)} path={path} query={query} next={here} contradicts={liveOthers} />
         </div>
       </div>
+      <PromotionPanel m={m} path={path} query={query} />
       <div className="px-3">
         <PropertyList
           items={[
@@ -340,6 +347,65 @@ async function MemoryRelated({ id, scope }: { id: number; scope: number | null }
           </table>
         )}
       </Section>
+    </div>
+  );
+}
+
+/** 큐레이터(결정적 정리) 마지막 실행 — curator.ran 이벤트 */
+function CuratorStatus({ run }: { run: ReturnType<typeof lastCuratorRun> }) {
+  if (!run) return <div className="ml-auto px-4 py-1.5 text-fg-3"><span className="label-caps mr-2">큐레이터</span>아직 실행 전 (워커가 시간마다)</div>;
+  const p = run.payload as { expired_unused?: number; expired_valid_to?: number; merged?: number; promotable?: number; merge_disabled?: boolean; errors?: number };
+  const parts = [
+    `미사용 보관 ${p.expired_unused ?? 0}`,
+    `유효기간 만료 ${p.expired_valid_to ?? 0}`,
+    p.merge_disabled ? "의미 중복: 임베딩 공간 없음" : `중복 합침 ${p.merged ?? 0}`,
+    `승격 후보 ${p.promotable ?? 0}`,
+    ...(p.errors ? [`오류 ${p.errors}`] : []),
+  ];
+  return (
+    <div className="ml-auto flex items-center gap-2 border-l border-line px-4 py-1.5" title={fmtTime(run.at)}>
+      <span className="label-caps">큐레이터</span>
+      <Tag tone="none">{timeAgo(run.at)}</Tag>
+      <span className="mono text-[11.5px] text-fg-3">{parts.join(" · ")}</span>
+    </div>
+  );
+}
+
+/** 승격 제안 — 확인된 기억이 승격 후보(memory.promotable 신호)면 구조화 액션 드로어 + 적용 후 memory.promote */
+function PromotionPanel({ m, path, query }: { m: MemoryRow; path: string; query: Record<string, string> }) {
+  const d = db();
+  const on = today();
+  const sig = promotionSignal(d, m, on, effectiveUses(d, useSince(on), [m.id]).get(m.id) ?? 0);
+  if (!sig) return null;
+  const drawer = (action: string, fixed: Record<string, unknown>, soft: Record<string, unknown> = {}) => {
+    const u = new URLSearchParams(query);
+    for (const [k, v] of new URL(actHref(path, action, fixed, soft), "http://x").searchParams) u.set(k, v);
+    return `${path}?${u}`;
+  };
+  return (
+    <div className="border-b border-line px-3 py-3">
+      <Callout tone="ai" title="승격 제안">
+        <p className="text-[12.5px]">{sig.detail}</p>
+        <ol className="mt-2 flex flex-col gap-1.5">
+          {sig.suggested.map((s, i) => {
+            // 대상 파라미터(client.update 의 id)는 고정, 나머지는 기본값 — 드로어에서 고쳐 쓸 수 있다
+            const param = getAction(s.action)?.target?.param;
+            const { [param ?? ""]: target, ...rest } = s.params;
+            return (
+            <li key={`${s.action}${i}`} className="flex flex-wrap items-center gap-1.5">
+              <span className="mono text-[11px] text-fg-4">{i + 1}.</span>
+              <Link href={drawer(s.action, param ? { [param]: target } : {}, param ? rest : s.params)} className="btn btn-sm"><Icon name="bolt" size={10} className="text-primary-fg" />{s.label}</Link>
+              <span className="mono text-[11px] text-fg-3">{s.action}</span>
+            </li>
+            );
+          })}
+          <li className="flex flex-wrap items-center gap-1.5">
+            <span className="mono text-[11px] text-fg-4">{sig.suggested.length + 1}.</span>
+            <Link href={drawer("memory.promote", { id: m.id })} className="btn btn-sm">적용한 뒤 · 승격 표시</Link>
+            <span className="text-[11px] text-fg-3">memory.promote — 만든 객체(예: task:12)에 연결하고 이 기억은 대체됨</span>
+          </li>
+        </ol>
+      </Callout>
     </div>
   );
 }

@@ -34,6 +34,8 @@ export type FieldSpec = {
   /** objref: 허용 유형 (비우면 전체) · choice: 옵션 공급원 */
   refTypes?: ObjectType[];
   optionsFrom?: "link_types" | "ai_profiles";
+  /** boolean: 값이 없을 때 폼 체크박스의 기본 상태 (폼은 체크 해제를 false 로 보내므로 액션의 '생략 시 기본값'이 폼에는 닿지 않는다) */
+  checked?: boolean;
 };
 
 export type Field<T = unknown> = { schema: z.ZodType<T>; spec: FieldSpec };
@@ -59,9 +61,10 @@ export const f = {
     const base = o.required || o.nonEmpty ? z.string().trim().min(1, `${label}을(를) 비울 수 없습니다`) : z.string().trim();
     return make(base.max(o.max ?? 200), { kind: "text", label, required: !!o.required, help: o.help, placeholder: o.placeholder });
   },
-  textarea(label: string, o: Opts = {}) {
+  /** max: 기본 5만 자 (문서 가져오기는 20만 자) */
+  textarea(label: string, o: Opts & { max?: number } = {}) {
     const base = o.required ? z.string().trim().min(1, `${label}을(를) 입력하세요`) : z.string();
-    return make(base.max(50_000), { kind: "textarea", label, required: !!o.required, help: o.help, placeholder: o.placeholder });
+    return make(base.max(o.max ?? 50_000, `${label}은(는) 최대 ${(o.max ?? 50_000).toLocaleString("ko-KR")}자`), { kind: "textarea", label, required: !!o.required, help: o.help, placeholder: o.placeholder });
   },
   email(label: string, o: Opts = {}) {
     return make(z.union([z.email(), z.literal("")]), { kind: "email", label, required: !!o.required, help: o.help });
@@ -106,8 +109,9 @@ export const f = {
       help: o.help ?? `${ref} 객체 id`,
     });
   },
-  boolean(label: string, o: Opts = {}) {
-    return make(z.boolean(), { kind: "boolean", label, required: !!o.required, help: o.help });
+  /** checked: 사람용 폼에서 처음 체크된 상태 (API 의 생략 시 기본값은 액션 run 이 정한다 — 둘을 맞춰 둘 것) */
+  boolean(label: string, o: Opts & { checked?: boolean } = {}) {
+    return make(z.boolean(), { kind: "boolean", label, required: !!o.required, help: o.help, checked: o.checked });
   },
   tags(label: string, o: Opts = {}) {
     return make(z.string().max(500), { kind: "tags", label, required: !!o.required, help: o.help ?? "쉼표로 구분" });

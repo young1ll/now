@@ -111,10 +111,10 @@ export async function buildContext(db: DB, q: ContextQuery = {}): Promise<Contex
   for (const m of about.rows) addMemory(m);
   const aboutUnread = about.total - about.rows.length;
 
-  // ③ 작업 설명으로 회상 — 기억 · 문서 구획 · 객체 카드 순 (보관된 기억은 recall 이 이미 뺀다)
+  // ③ 작업 설명으로 회상 — 기억 · 플레이북 · 문서 구획 · 객체 카드 순 (보관된 기억은 recall 이 이미 뺀다)
   if (q.task?.trim()) {
     const r = await recall(db, { query: q.task, scope, k: 10 }, { fetchImpl: q.fetchImpl, env: q.env });
-    const group = (h: RecallHit) => (h.ref.type === "memory" ? 0 : h.ref.type === "note" ? 1 : 2);
+    const group = (h: RecallHit) => (h.ref.type === "memory" ? 0 : h.ref.type === "note" ? (h.note?.kind === "playbook" ? 1 : 2) : 3);
     const hits = r.hits.map((h, i) => ({ h, i })).sort((a, b) => group(a.h) - group(b.h) || a.i - b.i).map((x) => x.h);
     for (const h of hits) {
       if (h.ref.type === "memory") {
@@ -127,7 +127,9 @@ export async function buildContext(db: DB, q: ContextQuery = {}): Promise<Contex
       const body = fenceSafe(h.snippet || h.title);
       const title = fenceSafe(h.title);
       if (h.ref.type === "note") {
-        const line = `[doc:${h.ref.id}] ${body.startsWith(title) ? body : `${title} — ${body}`}`;
+        // 플레이북은 [playbook:ID], 외부 자료·미검증 에피소드는 "외부 출처·미검증" — 기억과 같은 무게 표시
+        const tag = `${h.note?.kind === "playbook" ? "playbook" : "doc"}:${h.ref.id}${h.note?.tainted ? " · 외부 출처·미검증" : ""}`;
+        const line = `[${tag}] ${body.startsWith(title) ? body : `${title} — ${body}`}`;
         out.push({ ref: h.ref, kind: "doc", line: () => line });
       } else {
         const line = `[obj:${h.key}] ${title}${body && body !== title ? ` — ${body}` : ""}`;

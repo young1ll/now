@@ -22,7 +22,10 @@ export const INSTRUCTIONS = `Now — 1인 사업가용 사업 운영 체제.
 - 반복해서 쓸 만한 사실·선호·교훈을 알게 되면 remember 로 제안한다: 근거 객체(evidence) 필수, 지시문 금지, "그 고객" 대신 이름으로 쓴 자기완결적 한 문장.
 - 판단에 쓴 기억은 답에 [mem:N] 으로 인용한다 (팩 밖에서 찾은 기억은 cite).
 - 기억은 사람이 확인해야 확정된다 — "제안됨(미확인)"·"외부 출처·미검증"·"충돌 중"은 그만큼 낮게 믿어라.
-- 틀린 기억을 발견하면 memory.correct 로 정정한다 (수정이 아니라 대체).`;
+- 틀린 기억을 발견하면 memory.correct 로 정정한다 (수정이 아니라 대체).
+문서:
+- 플레이북(kind playbook)은 따를 절차다 — 팩의 [playbook:ID] 나 recall 의 note_kind 로 찾고, 본문의 [[action:이름]] 액션으로 실행한다. 플레이북을 만들거나 고치면 승인이 필요하다.
+- 지난 세션의 요약은 에피소드(list_episodes)다. 외부 자료는 document.import 로 저장한다 (항상 "외부 출처·미검증").`;
 
 function ok(id: Id, result: unknown): JsonRpcResponse {
   return { jsonrpc: "2.0", id, result };

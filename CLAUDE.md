@@ -18,7 +18,8 @@ AI 가 운영하고 사람이 관망·개입하는 1인 사업 운영 체제. Ne
 
 ## 이벤트 · AI
 - 이벤트는 `action_runs` 기록 시 자동 발행 (`lib/repos/runs.ts`). 새 이벤트 유형은 `emitEvent` 로 — 비밀값 금지.
-- 워커(`lib/events/worker.ts`)는 멱등이어야 한다: 점유는 조건부 UPDATE, 커서 전진은 트랜잭션.
+- 워커(`lib/events/worker.ts`)는 멱등이어야 한다: 점유는 조건부 UPDATE, 커서 전진은 트랜잭션. 워커가 하는 쓰기(에피소드·큐레이터)도 `SYSTEM` 행위자의 액션으로 — 시스템의 `action.*` 이벤트는 AI 트리거를 깨우지 않는다.
+- 문서 종류 `notes.kind`: 에피소드는 워커 전용(`document.record_episode`), 플레이북을 에이전트가 만들거나 고치면 high, 외부 자료는 `document.import`(에이전트면 tainted). 행위자에 따라 다른 위험도는 `risk(db, input, actor)`.
 - AI 공급자 추가 = `lib/ai/*` 어댑터(`ChatAdapter`) + `PROVIDER_INFO`. Claude 는 공식 SDK 로만. 키는 환경변수 이름만 저장.
 - 에이전트 도구 추가 = `lib/agent/tools.ts` 한 곳 → MCP · REST(`/api/v1/tools/{name}`) · OpenAPI · CLI 에 자동 노출.
 
@@ -36,7 +37,7 @@ AI 가 운영하고 사람이 관망·개입하는 1인 사업 운영 체제. Ne
 ## 데이터
 - 스키마 변경은 `lib/db/migrations.ts` 배열 **끝에 추가**. 기존 항목 수정 금지.
 - 금액: 통화 최소 단위 정수 (`lib/money.ts`). 다른 통화는 합산하지 않는다. 날짜 `YYYY-MM-DD`.
-- 비밀값은 DB·감사 결과·IaC 스냅샷에 남기지 않는다 (토큰은 해시, 발급 토큰은 `ctx.out`).
+- 비밀값은 DB·감사 결과·IaC 스냅샷에 남기지 않는다 (토큰은 해시, 발급 토큰은 `ctx.out`, 외부 본문을 받는 액션은 `secretFields` — 감사 params 까지 가린다).
 - `data/` 는 사업 데이터 — 커밋 금지.
 
 ## UI (디자인 시스템)

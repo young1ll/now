@@ -200,6 +200,32 @@ export function listMemoryUses(db: DB, f: { memoryId?: number; sessionId?: numbe
   return db.prepare(`SELECT * FROM memory_uses ${conds.length ? `WHERE ${conds.join(" AND ")}` : ""} ORDER BY id DESC LIMIT ?`).all(...params, f.limit ?? 100) as MemoryUse[];
 }
 
+/** "사용"을 세는 기간 (승격 후보 · 미사용 만료) */
+export const USE_WINDOW_DAYS = 90;
+
+/**
+ * 실제로 쓰인 횟수 (M4 §6.5) — use_count 는 텔레메트리 누계라 실패한 세션의 팩 포함까지 센다.
+ * 여기서의 사용 = since 이후 인용(cited) + 컨텍스트 포함(context) 중 성공한 세션(status succeeded)이거나 세션 밖(MCP·REST get_context).
+ * ids 를 주면 그 기억만, 없으면 사용이 있는 모든 기억. 없는 id 는 결과에 없다 (= 0).
+ */
+export function effectiveUses(db: DB, since: string, ids?: number[]): Map<number, number> {
+  const out = new Map<number, number>();
+  if (ids && !ids.length) return out;
+  const run = (part?: number[]) => {
+    const rows = db
+      .prepare(
+        `SELECT u.memory_id AS id, COUNT(*) AS n FROM memory_uses u LEFT JOIN agent_sessions s ON s.id = u.session_id
+         WHERE u.used_at >= ? AND (u.how = 'cited' OR u.session_id IS NULL OR s.status = 'succeeded')
+         ${part ? `AND u.memory_id IN (${part.map(() => "?").join(",")})` : ""} GROUP BY u.memory_id`,
+      )
+      .all(since, ...(part ?? [])) as { id: number; n: number }[];
+    for (const r of rows) out.set(r.id, r.n);
+  };
+  if (!ids) run();
+  else for (let i = 0; i < ids.length; i += 500) run(ids.slice(i, i + 500));
+  return out;
+}
+
 // ── 쓰기 (액션 전용) ──────────────────────────────────
 
 export type NewMemory = {

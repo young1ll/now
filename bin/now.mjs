@@ -24,6 +24,7 @@ const HELP = `now — Now 사업 운영 체제 CLI (에이전트용)
       문장은 대상을 이름으로 쓴 한 문장 ("한빛상사는 …"), 지시문·비밀값 금지. evidence 1개 이상 필수
   now memories [--status proposed,active] [--kind fact] [--about ref]   기억 목록
   now cite <기억 id…>                     팩 밖에서 찾아 쓴 기억의 사용 기록 (답에는 [mem:N] 으로 인용)
+  now episodes [--since ISO] [--limit 20]   지난 AI 세션 요약(에피소드) — 기억 정리의 원료
 
 쓰기 (정책·승인·감사를 거친다)
   now run <action> '<params JSON>' --reason "근거"
@@ -165,6 +166,7 @@ const commands = {
     });
   },
   memories: () => call("list_memories", { status: list(flags.status), kind: flags.kind === true ? undefined : flags.kind, about: flags.about === true ? undefined : flags.about, business_id: num(flags.business), limit: num(flags.limit) }),
+  episodes: () => call("list_episodes", { since: flags.since === true ? undefined : flags.since, limit: num(flags.limit), include_tainted: flags["no-tainted"] ? false : undefined }),
   cite: () => {
     const ids = pos.slice(1).flatMap((x) => x.split(",")).map((x) => Number(String(x).replace(/^(mem:|MEM-0*)/i, ""))).filter((n) => n > 0);
     if (!ids.length) die("기억 id 가 필요합니다: now cite 12 15");

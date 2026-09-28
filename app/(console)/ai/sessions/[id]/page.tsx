@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { SESSION_STATUS } from "@/components/automation";
 import { AutoRefresh } from "@/components/client";
+import { Icon } from "@/components/icons";
 import { Markdown } from "@/components/Markdown";
 import { MemoryLink, MemoryStatusTag } from "@/components/memory";
 import { Actor, ObjectLink, PageHeader, Panel, PropertyList, Tag, fmtTime } from "@/components/ui";
@@ -14,6 +15,8 @@ import { nodeInfo, parseRef } from "@/lib/ontology/graph";
 import { displayId } from "@/lib/ontology/ids";
 import { type Ref, refKey } from "@/lib/ontology/types";
 import { type MemoryRow, getMemory, listMemoryUses } from "@/lib/repos/memories";
+import { episodeUri, findNoteBySource } from "@/lib/repos/notes";
+import { getSetting } from "@/lib/repos/settings";
 
 export default async function SessionPage({ params }: { params: Promise<{ id: string }> }) {
   const id = idParam((await params).id);
@@ -22,6 +25,9 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
   const p = getProfile(db(), s.profile_id);
   const agent = p ? getAgent(db(), p.agent_id) : undefined;
   const st = SESSION_STATUS[s.status];
+  // 워커가 끝난 세션마다 만드는 요약 문서
+  const episode = findNoteBySource(db(), episodeUri(s.id), "episode");
+  const episodesOff = getSetting(db(), "episodes") === "off";
   // why-탐색기 1판: 세션이 받은 컨텍스트 팩(해시 + 항목)과 AI 가 인용한 기억
   const seen = s.context_refs.map((k) => parseRef(k)).filter((r): r is Ref => !!r);
   const info = nodeInfo(db(), seen);
@@ -37,6 +43,7 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
         title={<span className="flex items-center gap-2">세션 #{s.id} <Tag tone={st.tone}>{st.label}</Tag></span>}
         meta={s.prompt.split("\n")[0].slice(0, 160)}
         live={s.status === "running"}
+        actions={episode && <Link href={`/o/note/${episode.id}`} className="btn"><Icon name="note" size={12} /> 에피소드 {displayId("note", episode.id)}</Link>}
       />
       <div className="grid gap-px bg-void p-px xl:grid-cols-12">
         <div className="xl:col-span-8">
@@ -76,6 +83,20 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
                 { label: "시작", value: fmtTime(s.started_at), mono: true },
                 { label: "종료", value: fmtTime(s.finished_at), mono: true },
                 { label: "오류", value: s.error ? <span className="text-danger-fg">{s.error}</span> : "—" },
+                {
+                  label: "에피소드",
+                  value: episode ? (
+                    <span className="inline-flex items-center gap-1.5"><ObjectLink type="note" id={episode.id} title={episode.title} />{!!episode.tainted && <Tag tone="amber">외부 출처</Tag>}</span>
+                  ) : s.status !== "succeeded" && s.status !== "failed" ? (
+                    "—"
+                  ) : s.episode_recorded_at ? (
+                    <span className="text-fg-3">삭제됨 — 워커가 다시 만들지 않음 (<Link href={`/o/note?act=document.record_episode&p.session_id=${s.id}`} className="link">다시 기록</Link>)</span>
+                  ) : episodesOff ? (
+                    <span className="text-fg-3">기록 꺼짐 (설정 episodes=off)</span>
+                  ) : (
+                    "기록 대기 (워커)"
+                  ),
+                },
               ]}
             />
             {agent && <Link href={`/activity?actor=agent:${agent.id}`} className="link mt-3 inline-block text-[12px]">이 에이전트의 액션 기록 →</Link>}

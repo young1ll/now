@@ -1,6 +1,6 @@
 # 기억 · 지식 · 검색 설계 (v0.4 방향)
 
-> 상태: **M1 · M2 · M3 구현됨** (§11 · §12 · §13), M4 이후 설계안. 구현하면서 바뀌는 부분은 이 문서를 먼저 고친다.
+> 상태: **M1 · M2 · M3 · M4 구현됨** (§11 · §12 · §13 · §14), M5 설계안. 구현하면서 바뀌는 부분은 이 문서를 먼저 고친다.
 > 전제: [ONTOLOGY.md](ONTOLOGY.md) 의 의미(semantic) · 행동(kinetic) 계층, [AGENTS.md](AGENTS.md) 의 단일 관문(`executeAction`).
 
 ## 0. 한 문장
@@ -279,7 +279,7 @@ score = RRF(fts, vec, graph)
 | **M1 검색 기반** ✅ | `chunks`·`chunks_fts`·`chunks_words`, 객체 카드, 색인 워커, `recall`(FTS+그래프), `/search` 교체, 골든셋·`eval:recall` (`documents` 는 M4 로) | 임베딩 없이 recall@5 기준선 측정, 기존 테스트 전부 통과 — §11 |
 | **M2 벡터** ✅ | `embedding_spaces`·`now-vec.db` (`embed_queue` 대신 해시 LEFT JOIN — §12), Ollama/OpenAI 호환/OpenAI/Gemini/Voyage 임베더, bit→float 재정렬, 공간 교체 | 5만 청크 합성 데이터 p95 < 20ms (KNN), 하이브리드 recall@5 > FTS 단독 |
 | **M3 기억** ✅ | `memories` · `memory_uses` + 액션 10종 + 링크 유형 4종(`*` 도착), 어휘 중복·숫자 충돌, tainted 상속, 컨텍스트 팩, `/memory` 화면, MCP `remember`·`get_context`·`cite` | AI 가 제안 → 사람 확인 → 다음 세션 팩에 등장하는 E2E, 충돌 신호 E2E — §13 |
-| **M4 큐레이터** | 에피소드 요약, 기억 추출·병합·만료, 승격 제안, 플레이북 문서 | 매일 밤 큐레이터 실행 결과가 승인함에 "기억 검토 n건"으로 나타남 |
+| **M4 큐레이터** ✅ | 에피소드 요약, 기억 추출·병합·만료, 승격 제안, 플레이북 문서 (`documents` 대신 `notes.kind` — §14) | 매일 밤 큐레이터 실행 결과가 승인함에 "기억 검토 n건"으로 나타남 — §14 |
 | **M5 신뢰** | 에이전트 역할·범위, 기억 신뢰도 집계, 자동 착지 | 등급 상승은 사람 승인, 하락은 자동 — 테스트로 고정 |
 
 M1 → M3 까지가 "AI 와 사람이 함께 관리하는 기억/지식"의 최소 완성형이다. M2 는 M1 과 병행 가능하며, 임베딩이 없어도 M3 이 동작하도록 설계한다.
@@ -450,3 +450,73 @@ npm run eval:recall -- --embed-url http://127.0.0.1:8088/v1 --embed-model wordll
 
 - 기존 24건만 보면 hybrid 의 R@1 은 M2 와 같다 (18/24). 순위가 바뀐 것은 의미 질의 "계약 갱신 협상 중인 거래처" 3 → 4위 하나 (새 기억이 같은 말을 품어서). 전체 R@1 이 0.75 → 0.70 인 것은 새 기억 질의 3건 중 2건이 1위가 아니기 때문이다 — "카페 온도 규모 기억"은 **제안 상태 ×0.6** 가중으로 4위(확인되지 않은 기억을 일부러 낮게 둔다), "Acme SSO 요구 기억"은 hybrid 에서 관계 신호를 받은 고객 카드가 1위 · 기억 2위.
 - 어휘 모드에서 "SSO 요구하는 고객" 은 확인된 기억(MEM-0003)이 1위, 고객이 2위가 되었다. 기억이 질문의 답 그 자체라 퇴행으로 보지 않는다 (hybrid 에서는 고객 1위).
+
+## 14. M4 구현 기록 (v0.4)
+
+### 무엇이 들어갔나
+
+| 위치 | 내용 |
+|---|---|
+| 마이그레이션 7 | `notes.kind`(note · playbook · episode · brief · source) · `source_uri` · `tainted` · `version`, `note_versions`(이전 내용 — changed_by·changed_at = 그 버전을 다음 버전으로 바꾼 행위자·시각), `notes_kind` 색인, 에피소드 유일 색인(`source_uri WHERE kind='episode'`), 시스템 링크 유형 `mentions`(note → *) — 같은 이름의 사용자 유형은 `mentions_user` 로 |
+| 마이그레이션 8 | `agent_sessions.episode_recorded_at`(에피소드를 기록한 적 있는 세션 — 기존 에피소드로 채움), 미기록 세션 부분 색인, `memory_uses(session_id, how)` 색인(에피소드의 인용 기억 조회) |
+| 문서 액션 (`lib/ontology/actions/note.ts`) | `note.create`/`note.update` 에 kind · source_uri · tainted, 제목·본문이 바뀌면 버전. `note.revert`(사람, low — 되돌림도 새 버전). `document.import`(누구나, low, ≤20만 자, 비밀값 가림, 에이전트면 tainted 강제). `document.record_episode`(humanOnly — SYSTEM 가능, 멱등) |
+| 위험도 함수 확장 | `risk(db, input, actor)` — `resolveRisk` 가 실행 행위자를 넘긴다 (행위자를 모르는 화면 표시는 에이전트로 가정). 기존 액션은 그대로 |
+| `lib/knowledge/episodes.ts` | `buildEpisode` (결정적 본문 · mentions · 사업 · 오염), `episodeTaint`(규칙은 아래), `sessionRuns` |
+| `lib/knowledge/playbooks.ts` | `playbookActions(body) → {name, known}[]` (`[[action:이름]]`, 등장 순서·중복 제거) |
+| `lib/knowledge/curator.ts` | `curate(db, {now, fetchImpl, env, since})` · `maybeCurate`(시간당 점유) · `lastCuratorRun` |
+| 워커 | 틱: … 실행 → `recordEpisodes`(틱당 10, `settings.episodes='off'`) → 색인 → 임베딩 → `maybeCurate`(분 단위 틱에서만, `settings.curator='off'`). 출력 `episodes` · `curated`. 시스템 행위자의 `action.*` 이벤트는 AI 트리거를 깨우지 않는다. `renderPrompt` 에 `{{trigger.last_fired_at}}`(이전 발화 — trigger_runs 에서) |
+| 신호 | `memory.promotable:<id>` (info) + suggested 3종 — `promotionSignal` · `recurrenceOf` |
+| 회상 · 팩 | recall hit 에 `note: {kind, tainted}` (도구: `note_kind`), 오염 문서 ×0.7, `mentions` 간선 ×0.3. 팩: 기억 → **플레이북**(`[playbook:ID]`) → 다른 문서 → 객체, 오염 문서 `[doc:ID · 외부 출처·미검증]` |
+| 사용 기록 정밀도 (§6.5) | 팩 기억의 `context` 사용은 첫 LLM 응답 뒤(로컬 CLI 는 종료 코드 0 뒤). 승격 후보·미사용 만료의 "사용" = `effectiveUses`(최근 90일 인용 + 성공 세션 또는 세션 밖 get_context 의 컨텍스트) |
+| 도구 · CLI | `list_episodes`, `describe_ontology.conventions.documents`, MCP 지침(플레이북·에피소드·외부 자료), `now episodes` |
+| 화면 | `/o/note` 종류 탭 · "외부 자료 가져오기" · 생성 드로어 kind(에피소드 제외). 문서 화면: 외부 출처 경고 Callout · 에피소드 패널(세션 링크 · 언급 객체) · 플레이북 패널(참조 액션 칩 — 알 수 없는 이름은 danger Tag, 팩에 들어간 세션 수·성공·실패) · 버전 이력(되돌리기 드로어) · 본문의 `[[action:x]]` 칩. `/memory` 머리에 큐레이터 마지막 실행·요약, 승격 후보면 "승격 제안" 패널(suggested 드로어 + `memory.promote`). 세션 화면에 에피소드 링크 |
+| 예시 데이터 | 플레이북 "미수금 독촉 플레이북", AI 프로필 "큐레이터 (기억 정리)"(anthropic · 16단계 · 역할 프롬프트) + 스케줄 트리거 "야간 기억 정리"(`10 3 * * *`). 골든셋 +1 (플레이북 어휘 질의) |
+
+### 큐레이터 규칙 (결정적 — `curate`)
+
+| 규칙 | 조건 | 처리 (SYSTEM 행위자) | 감사 사유 |
+|---|---|---|---|
+| a. 미사용 만료 | `proposed` · 생성 30일 경과 · 최근 90일 실제 사용 0 | `memory.retire` reason "미확인·미사용 30일 — 자동 보관" | 큐레이터 규칙 a |
+| b. 유효기간 만료 | `valid_to` < 오늘 · proposed/active/**verified** | `memory.retire` reason "유효기간 만료" (verified 포함 — 사람이 정한 기한) | 큐레이터 규칙 b |
+| c. 의미 중복 | 활성 임베딩 공간 · 지난 실행 이후(처음이면 최근 30일) 생긴 proposed/active 기억 + 미룬 기억(벡터 없음 · 실행당 200 초과) × 같은 사업 · about 겹침(둘 다 없음 포함) · proposed/active/verified 상대 · **카드 벡터 코사인 ≥ 0.92** | `memory.merge {id: 새것, into: 확인된 쪽 또는 오래된 쪽}` — 없어질 쪽이 사람이 본 기억(verified · verified_at · 고정)이면 합치지 않는다 | 큐레이터 규칙 c (코사인 값) |
+| d. 승격 후보 | `verified` · (최근 90일 실제 사용 ≥ 5 또는 고정) | 신호 `memory.promotable:<id>` — 계산형이라 저장 없음, curate 는 수만 센다 | — |
+| e. 요약 | 매 실행 | 이벤트 `curator.ran` (규칙별 수) · `settings.curator_last_run` | — |
+
+suggested (d): 대상에 고객 + 선호·사실·주의 → `client.update {id, memo: 기존 + "\n- 문장"}` "고객 메모에 반영" · 절차 힌트·교훈 → `note.create {kind: playbook, title: "플레이북 초안 · …", body: 문장 + 근거 목록, business_id}` · 문장에 주기("매월 N일" · "매주 X요일" · "매 분기/분기마다/분기별" · "매년 M월 D일") → `task.create {business_id, title, recurrence, due_date: 다음 회차, client_id}`. 적용 뒤 `memory.promote` 로 연결하라는 안내는 detail 에, 화면은 드로어 링크로.
+
+### 에피소드 오염 규칙
+
+"누가 이 세션을 시작시켰나"로만 판정한다. 사람이 직접 지시(`ai.run`) · 스케줄 · 사람의 수동 트리거 실행 · 신호 같은 시스템 이벤트 → 0. 이벤트 트리거인데 **이벤트 행위자가 에이전트**이거나 **이벤트 페이로드·대상이 tainted 문서·기억을 가리키면**(subject · `payload.refs` · `memory_id`/`other_id`/`note_id`) → 1. 세션 도중 도구로 읽은 내용은 보지 않는다 — 결과 문장에 섞일 수 있지만, 그렇게 넓히면 오염 문서가 팩에 한 번 들어간 세션이 전부 오염되어 규칙이 의미를 잃는다(M5 의 에이전트 범위 필터와 함께 재검토). 판정 이유는 `document.record_episode` 감사 결과의 `data.taint_reason`.
+
+### 설계에서 바뀐 것
+
+- **`documents` 테이블 대신 `notes.kind`.** 설계(§2)는 notes 를 감싸는 `documents` 를 두었지만, 모든 문서 기능(객체 유형 `note`, 카드·색인, 액션, 링크, 화면, 도구)이 이미 notes 위에 있다. 감싸는 테이블을 두면 문서 하나가 두 id 를 갖고, 색인·링크·권한·감사가 어느 쪽을 가리킬지 매번 정해야 한다. 종류·출처·오염·버전은 열 네 개로 충분하고, 버전 원문만 `note_versions` 로 뺐다. `source_hash` 는 넣지 않았다 — 외부 fetch 가 없어(가져오기는 본문을 받아 저장만) 원본 변경을 감지할 일이 아직 없다.
+- **`document.import` 대신 설계의 `document.ingest`.** 이름은 명세대로 import. URL·파일 fetch 는 넣지 않았다 — 외부로 나가는 fetch 는 high 이고 SSRF 경로라 별도 설계가 필요하다.
+- **에피소드 멱등의 안전망.** 명세의 "이미 있으면 기존 id" 는 액션 안의 검사다. 워커가 여러 프로세스로 돌 때 두 트랜잭션이 동시에 검사를 통과할 수 있어 `notes(source_uri) WHERE kind='episode'` 유일 색인을 더했다 (늦은 쪽은 실패 run 으로 남고 다음 틱에서 "이미 기록됨").
+- **에이전트는 에피소드를 고칠 수 없다.** 명세는 "만들 수 없음"까지지만, 고칠 수 있으면 오염된 세션의 요약을 깨끗한 것처럼 바꾸거나 큐레이터의 원료를 조작할 수 있다. 사람은 고칠 수 있다(민감 정보 제거 등) — 버전 이력에 남는다. 종류는 누구도 바꿀 수 없다.
+- **에이전트는 문서의 오염 표시를 지울 수 없다** (외부 자료는 만들 때부터 강제). 사람이 만드는 외부 자료(`note.create kind: source` 포함)도 기본은 tainted — 끄려면 명시.
+- **워커(시스템) 액션은 AI 트리거를 깨우지 않는다.** 에피소드 기록이 `action.applied`(시스템)를 내므로 `action.*` 패턴의 AI 트리거가 있으면 세션 → 에피소드 → 세션 … 고리가 생긴다. 기존 루프 방지(런타임 에이전트의 이벤트)를 시스템 행위자의 `action.*` 로 넓혔다. 웹훅 트리거는 그대로 받는다. `curator.ran` 은 `action.*` 가 아니라 깨울 수 있다 (시간당 1회라 고리가 되지 않는다).
+- **`mentions` 는 문서 카드에만.** 사용자 정의 링크는 양쪽 카드에 들어가는데(§11), 에피소드는 계속 쌓이므로 언급된 고객·업무 카드가 세션마다 바뀌어 재색인·재임베딩된다. 에피소드 카드에만 "언급: CLT-0001 한빛상사" 로 넣고, 관계 확장에서는 기억처럼 ×0.3.
+- **큐레이터 c 의 대상 = 지난 실행 이후 생긴 기억 + 미룬 기억.** 새 기억의 카드 벡터는 임베딩 워커가 비동기로 채우므로, 실행 시점에 벡터가 없던 기억은 `merge_skipped` 로 세고 `settings.curator_merge_retry` 에 남겨 다음 실행이 다시 본다(생성 뒤 하루 동안). 처음엔 창 전체에 하루 여유를 두었으나, 매시간 같은 전체 비교를 25시간 되풀이해 워커(= Next 서버 프로세스, 동기 SQLite)를 수 초씩 막아서 바꿨다. 같은 이유로 실행당 최대 200개(`MERGE_PER_RUN`, 넘는 것은 `merge_deferred` 로 미룸), 첫 실행은 최근 30일, 같은 사업·about 묶음의 동료 목록과 벡터는 실행 동안 한 번만 읽는다. disputed 기억은 합치기 대상에서 뺐다 — 충돌은 사람이 `memory.resolve` 로 푼다.
+- **사람이 지운 에피소드는 다시 만들지 않는다.** 워커는 "에피소드 문서가 없는 세션"이 아니라 "기록한 적 없는 세션"(`agent_sessions.episode_recorded_at` 이 빔)을 고른다 — 문서 유무로 고르면 사람이 `note.delete` 로 지운 에피소드(민감한 요약 등)를 다음 틱에 SYSTEM 이 되살린다. 다시 만들려면 사람이 `document.record_episode` 를 직접 실행한다(세션 화면의 "다시 기록"). 에피소드의 `source_uri`('session:<id>' — 세션 연결이자 멱등 키)는 사람도 바꿀 수 없다 — 편집 드로어가 같은 값을 다시 보내는 것은 허용.
+- **외부 본문의 비밀값은 감사 기록에도 남기지 않는다.** `document.import` 는 `secretFields: [title, body, source_uri]` — `executeAction` 이 검증 전에 `redactSecrets` 를 적용해 감사(`action_runs.params`, 실패·거부 포함) · 승인 대기 · 실행이 모두 가린 값만 본다. 기존 `redact`(humanOnly 전용, 필드 통째 치환)와 달리 가린 값이 그대로 유효한 입력이라 승인 재실행이 된다.
+- **폼의 boolean 기본값.** 사람용 폼은 체크 해제를 `false` 로 보내므로 액션의 "생략 시 기본 true"가 폼에 닿지 않는다. `f.boolean(…, {checked: true})` 로 폼 기본 상태를 따로 준다 (`document.import.tainted`). `/o/note` 의 외부 자료 탭에서 여는 `note.create` 는 `d.tainted=true`. 생성 드로어에서 종류만 source 로 바꾸면 체크는 사람이 직접 한다 — 그래서 "외부 자료 가져오기" 버튼을 따로 둔다.
+- **문서 목록은 본문 앞 300자만.** 에피소드가 세션마다 쌓이므로 `/o/note` · 참조 선택지 · 검색은 `listNotes({excerpt, limit, kind})` 로 필요한 만큼만 읽고, 종류 탭은 SQL 로 거르고 센다(`facetCounts`). 참조 선택지의 에피소드는 최근 20개(+ 지금 값).
+- **"실제 사용"의 기간.** 명세의 "최근 90일 cited + 성공한 세션의 context" 에서 90일을 context 에도 적용했다. 세션 밖(MCP·REST 의 `get_context`)의 context 사용은 세션 상태가 없어 사용으로 센다 — 외부 에이전트에게 팩이 실제로 전달된 것이다. `use_count` 는 텔레메트리 누계로 그대로 둔다 (화면의 "사용 N회").
+- **승격 신호의 반복 업무 제안은 사업이 있을 때만** (업무는 사업이 필수 — 기억이 전역이면 대상 고객의 사업). "3분기" 처럼 숫자가 붙은 분기는 주기로 보지 않는다 ("매 분기 · 분기마다 · 분기별" 만).
+- **`trigger.last_fired_at` 은 이전 발화.** `triggers.last_fired_at` 은 점유 때 이미 이번 발화 시각으로 바뀌어 있어, `trigger_runs` 에서 이 실행 이전의 마지막 발화(건너뜀 제외)를 찾아 넘긴다. 처음이면 빈 값 → `list_episodes` 기본 7일.
+- **recall 의 오염 문서 가중.** 명세에는 없지만 설계 §5 의 `tainted ×0.7` 을 문서에도 적용했다 (기억과 같은 규칙).
+- **에피소드의 "실행한 액션"은 시간 범위로 찾는다** (명세대로). 같은 프로필의 세션 두 개가 동시에 돌면(백그라운드 워커 최대 4) 서로의 액션이 섞일 수 있다 — 도구 결과의 run_id 로 묶는 것이 더 정확하지만 대화 기록이 잘릴 수 있어(12,000자) 지금은 시간 범위.
+
+### 측정 (이 개발 컨테이너)
+
+```bash
+npm run eval:recall
+```
+
+| 조건 | 모드 | R@1 | R@5 | MRR | 종류별 R@5 |
+|---|---|---|---|---|---|
+| 예시 데이터 (+플레이북 · 큐레이터 프로필), 공간 없음 · 골든셋 28건 | lexical | 0.71 | 0.96 | 0.82 | 어휘 1.00 · 참조 1.00 · 관계 1.00 · 의미 0.80 · 기억 1.00 |
+| 〃 | hybrid | 0.71 | 0.96 | 0.82 | 〃 |
+
+- 예시 데이터의 플레이북이 처음에는 "카페 온도 규모 기억" 질의를 어휘 모드 6위로 밀었다 (본문의 "기억에서 확인" 이 질의어 "기억"과 일치). 플레이북 문구를 바꿔 M3 수치로 되돌렸다 — 골든셋이 작아 문서 하나의 어휘에도 흔들린다는 신호다.

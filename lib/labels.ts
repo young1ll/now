@@ -47,6 +47,10 @@ export const MEMORY_KIND = { fact: "사실", preference: "선호", lesson: "교�
 
 export const MEMORY_ORIGIN = { human: "사람", agent: "에이전트", consolidation: "통합", import: "가져오기" } as const;
 
+/** 문서 종류 (notes.kind) — 에피소드는 워커만 만든다 */
+export const NOTE_KIND = { note: "문서", playbook: "플레이북", episode: "에피소드", brief: "브리프", source: "외부 자료" } as const;
+export const NOTE_KIND_TONE = { note: "slate", playbook: "blue", episode: "zinc", brief: "slate", source: "amber" } as const;
+
 export const CHECK_STATUS = {
   ok: { label: "정상", tone: "green" },
   degraded: { label: "주의", tone: "amber" },

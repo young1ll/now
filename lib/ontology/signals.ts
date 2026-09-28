@@ -1,10 +1,11 @@
 // 신호(signals): 지금 주의가 필요한 상태. 에이전트의 작업 큐이자 사람의 관망 화면.
 import type { DB } from "@/lib/db";
-import { addDays, daysBetween, today } from "@/lib/dates";
+import { addDays, addMonths, daysBetween, parseYmd, toYmd, today } from "@/lib/dates";
 import { formatMoney } from "@/lib/money";
 import { listClients } from "@/lib/repos/clients";
 import { listInvoices } from "@/lib/repos/finance";
-import { LIVE_STATUSES, getMemory, listMemories, memoryLinks, reviewCounts } from "@/lib/repos/memories";
+import { getClient } from "@/lib/repos/clients";
+import { LIVE_STATUSES, type MemoryRow, USE_WINDOW_DAYS, effectiveUses, getMemory, listMemories, memoryLinks, reviewCounts } from "@/lib/repos/memories";
 import type { Scope } from "@/lib/repos/scope";
 import { latestSnapshot } from "@/lib/repos/snapshots";
 import { listTasks } from "@/lib/repos/tasks";
@@ -167,6 +168,13 @@ export function computeSignals(db: DB, scope: Scope, on = today()): Signal[] {
       ],
     });
   }
+  // 승격 후보: 확인된 기억 중 최근 90일 실제 사용(인용 + 성공 세션의 컨텍스트) ≥ 5 이거나 고정 (M4 §5.1 d)
+  const verified = listMemories(db, scope, { status: ["verified"], limit: -1 });
+  const uses = effectiveUses(db, useSince(on), verified.map((m) => m.id));
+  for (const m of verified) {
+    const sig = promotionSignal(db, m, on, uses.get(m.id) ?? 0);
+    if (sig) out.push(sig);
+  }
   for (const { business_id: bid, business_name: name, n, since } of reviewCounts(db, scope)) {
     const r = { n, name, since };
     out.push({
@@ -217,4 +225,113 @@ export function computeSignals(db: DB, scope: Scope, on = today()): Signal[] {
   }
 
   return out.sort((a, b) => RANK[a.severity] - RANK[b.severity] || (a.since ?? "").localeCompare(b.since ?? ""));
+}
+
+// ── 기억 승격 후보 ───────────────────────────────────────
+
+/** 승격 후보가 되는 최소 사용 수 (최근 90일 · 인용 + 성공 세션 컨텍스트) */
+export const PROMOTE_MIN_USES = 5;
+
+/** 사용 집계 시작 시각 (기준일 on 의 90일 전, ISO) */
+export const useSince = (on: string) => parseYmd(addDays(on, -USE_WINDOW_DAYS)).toISOString();
+
+const WEEKDAYS = "일월화수목금토";
+type Recurrence = { recurrence: "weekly" | "monthly" | "quarterly" | "yearly"; due: string; phrase: string };
+
+/**
+ * 문장 속 주기 표현 → 반복 업무 (다음 날짜는 기준일 포함 이후 첫 회차).
+ * "매월 5일" · "매주 금요일" · "매 분기 / 분기마다 / 분기별" (→ 다음 분기 첫날) · "매년 3월 31일"
+ */
+export function recurrenceOf(statement: string, on: string): Recurrence | undefined {
+  const t = statement.normalize("NFKC");
+  const monthly = t.match(/매\s*월\s*(\d{1,2})\s*일/);
+  if (monthly) {
+    const day = Number(monthly[1]);
+    if (day < 1 || day > 31) return undefined;
+    const at = (ym: string) => {
+      const last = new Date(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)), 0).getDate();
+      return `${ym}-${String(Math.min(day, last)).padStart(2, "0")}`;
+    };
+    const cur = at(on.slice(0, 7));
+    return { recurrence: "monthly", due: cur >= on ? cur : at(addMonths(`${on.slice(0, 7)}-01`, 1).slice(0, 7)), phrase: monthly[0] };
+  }
+  const weekly = t.match(/매\s*주\s*([일월화수목금토])\s*요일/);
+  if (weekly) {
+    const want = WEEKDAYS.indexOf(weekly[1]);
+    const d = parseYmd(on);
+    return { recurrence: "weekly", due: addDays(on, (want - d.getDay() + 7) % 7), phrase: weekly[0] };
+  }
+  const yearly = t.match(/매\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일/);
+  if (yearly) {
+    const month = Number(yearly[1]);
+    const day = Number(yearly[2]);
+    // 없는 날짜(13월 · 4월 31일)는 주기로 보지 않는다. 2월 29일은 평년에 말일(28일)로 보정 (매월 분기와 같은 방식)
+    if (month < 1 || month > 12 || day < 1 || day > new Date(2000, month, 0).getDate()) return undefined;
+    const at = (y: number) => `${y}-${String(month).padStart(2, "0")}-${String(Math.min(day, new Date(y, month, 0).getDate())).padStart(2, "0")}`;
+    const y = Number(on.slice(0, 4));
+    const cur = at(y);
+    return { recurrence: "yearly", due: cur >= on ? cur : at(y + 1), phrase: yearly[0] };
+  }
+  const quarterly = t.match(/매\s*분기|분기\s*마다|분기별/);
+  if (quarterly) {
+    const d = parseYmd(on);
+    const next = new Date(d.getFullYear(), Math.floor(d.getMonth() / 3) * 3 + 3, 1);
+    return { recurrence: "quarterly", due: toYmd(next), phrase: quarterly[0] };
+  }
+  return undefined;
+}
+
+const short = (s: string, n = 40) => (s.length > n ? `${s.slice(0, n)}…` : s);
+
+/**
+ * 확인된 기억이 승격 후보면 신호 (info). suggested = 구조화된 객체로 옮기는 액션들:
+ *  - 대상에 고객 + 선호·사실·주의 → client.update (고객 메모에 한 줄 추가)
+ *  - 절차 힌트·교훈 → note.create (플레이북 초안)
+ *  - 문장에 주기(매월 N일 · 매주 X요일 · 분기) → task.create (반복 업무)
+ * 적용한 뒤 memory.promote 로 기억을 새 객체에 연결한다 (detail 안내 — 화면은 드로어 링크를 함께 보인다).
+ */
+export function promotionSignal(db: DB, m: MemoryRow, on: string, uses: number): Signal | undefined {
+  if (m.status !== "verified" || !(uses >= PROMOTE_MIN_USES || m.pinned)) return undefined;
+  const l = memoryLinks(db, m.id);
+  const clientRef = l.about.find((r) => r.type === "client");
+  const client = clientRef ? getClient(db, clientRef.id) : undefined;
+  const businessId = m.business_id ?? client?.business_id ?? null;
+  const suggested: Signal["suggested"] = [];
+  if (client && ["preference", "fact", "caution"].includes(m.kind)) {
+    const memo = client.memo.trim();
+    suggested.push({ action: "client.update", label: "고객 메모에 반영", params: { id: client.id, memo: `${memo ? `${memo}\n` : ""}- ${m.statement}` } });
+  }
+  if (m.kind === "procedure_hint" || m.kind === "lesson") {
+    const evidence = l.evidence.map((r) => `- ${displayId(r.type, r.id)}`);
+    suggested.push({
+      action: "note.create",
+      label: "플레이북 초안 만들기",
+      params: {
+        kind: "playbook",
+        title: `플레이북 초안 · ${short(m.statement)}`,
+        body: [`${m.statement}`, "", `## 근거 (${displayId("memory", m.id)})`, ...(evidence.length ? evidence : ["- (근거 없음)"])].join("\n"),
+        ...(businessId ? { business_id: businessId } : {}),
+      },
+    });
+  }
+  const rec = recurrenceOf(m.statement, on);
+  if (rec && businessId) {
+    suggested.push({
+      action: "task.create",
+      label: "반복 업무로 만들기",
+      params: { business_id: businessId, title: short(m.statement, 60), recurrence: rec.recurrence, due_date: rec.due, ...(client ? { client_id: client.id } : {}) },
+    });
+  }
+  return {
+    key: `memory.promotable:${m.id}`,
+    kind: "memory.promotable",
+    severity: "info",
+    title: `구조화할 만한 기억 · ${m.statement}`,
+    detail: `${m.pinned ? "고정 기억" : `최근 ${USE_WINDOW_DAYS}일 사용 ${uses}회`} — 제안 액션으로 옮긴 뒤 memory.promote 로 이 기억을 새 객체에 연결하세요${suggested.length ? "" : " (자동 제안 없음 — 직접 구조화)"}`,
+    ref: { type: "memory", id: m.id },
+    displayId: displayId("memory", m.id),
+    businessId: m.business_id,
+    since: (m.verified_at ?? m.updated_at).slice(0, 10),
+    suggested,
+  };
 }

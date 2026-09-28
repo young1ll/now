@@ -13,6 +13,7 @@ import { recall } from "@/lib/knowledge/recall";
 import { MEMORY_KINDS, MEMORY_STATUSES, actorKey, listMemories, memoryLinks, recordMemoryUse } from "@/lib/repos/memories";
 import { SYSTEM_LINK_TYPES } from "@/lib/ontology/schema";
 import { listEvents } from "@/lib/repos/events";
+import { episodeSessionId, listEpisodes } from "@/lib/repos/notes";
 import { opsOverview } from "@/lib/ontology/ops";
 import { computeSignals } from "@/lib/ontology/signals";
 import { ActionError, type Actor, OBJECT_TYPES, type Ref, refKey } from "@/lib/ontology/types";
@@ -108,7 +109,9 @@ export const TOOLS: Tool[] = [
           l.source === "custom"
             ? l.name === "contradicts" || l.name === "promoted_to"
               ? "memory.* 액션만 (contradicts: memory.propose · resolve / promoted_to: memory.promote)"
-              : (SYSTEM_LINK_TYPES as readonly string[]).includes(l.name)
+              : l.name === "mentions"
+                ? "document.record_episode(워커)가 만든다 (link.create 도 가능) — 시스템 링크 유형, 삭제 불가"
+                : (SYSTEM_LINK_TYPES as readonly string[]).includes(l.name)
                 ? "memory.propose · memory.correct 가 만든다 (link.create 도 가능) — 시스템 링크 유형, 삭제 불가"
                 : "link.create / link.delete"
             : l.source === "intrinsic"
@@ -120,6 +123,8 @@ export const TOOLS: Tool[] = [
         dates: "YYYY-MM-DD",
         ids: "객체 id 는 정수. display_id(CLT-0003 등)는 사람용 표기. 객체 참조 문자열은 \"client:3\" 또는 \"CLT-0003\".",
         graph: "traverse 로 이웃을, find_path 로 두 객체 사이 관계를 탐색한다.",
+        documents:
+          "문서(note)의 kind: note(일반) · playbook(AI 가 따르는 절차 — 본문의 [[action:이름]] 이 액션 참조, 에이전트가 만들거나 고치면 고위험) · episode(워커가 끝난 세션마다 만든 요약 — list_episodes, 에이전트는 못 만들고 못 고친다) · brief(보고·브리핑) · source(외부 자료 — document.import, 에이전트가 가져오면 항상 tainted). tainted 문서를 근거로 한 기억은 tainted. 제목·본문을 고치면 버전이 쌓인다(사람은 note.revert 로 되돌림).",
         memory:
           "기억(memory)은 구조로 담기 어려운 사실·선호·교훈·절차 힌트·주의를 한 문장으로 적은 객체다. 에이전트는 remember(=memory.propose, 근거 객체 1개 이상)로 제안하고 사람이 확인해야 verified 가 된다. 상태: proposed(제안) · active(활성, 미확인) · verified(확인됨) · disputed(충돌) · superseded(대체) · retired(보관). 문장은 대상을 이름으로 적은 자기완결적 서술 — 지시문·비밀값 금지. 틀리면 memory.correct(대체). 쓴 기억은 답에 [mem:ID] 로 인용. get_context 가 작업에 맞는 기억·문서 팩을 준다.",
       },
@@ -136,7 +141,7 @@ export const TOOLS: Tool[] = [
     },
     (db, _a, { type, query, business_id, limit }) => {
       const scope = business_id ?? null;
-      const rows = type ? OBJECTS[type].list(db, scope, query) : searchObjects(db, scope, query ?? "", 20);
+      const rows = type ? OBJECTS[type].list(db, scope, query, { limit: limit ?? 50 }) : searchObjects(db, scope, query ?? "", 20);
       return rows.slice(0, limit ?? 50).map((r) => ({
         type: r.ref.type,
         id: r.ref.id,
@@ -151,7 +156,7 @@ export const TOOLS: Tool[] = [
   ),
   def(
     "recall",
-    "자연어 회상 검색: 이름·내용·접촉 이력·문서 본문·기억(어휘), 뜻이 비슷한 표현(의미 — 임베딩 공간이 활성일 때), 관계(그래프)를 함께 본다. 기억은 상태로 가중된다(확인됨 1.0 · 활성 0.85 · 제안 0.6 · 충돌 0.4, 외부 출처 ×0.7) — memory_status 를 보고 무게를 달리 둬라. 무엇을 찾아야 할지 흐릿할 때(\"SSO 요구한 고객\", \"부가세 마감 절차\", \"클라우드 서버 비용\") 먼저 쓰고, 결과의 ref 로 get_object 를 호출하라. why: lexical=내용 일치 · semantic=의미 유사(similarity=코사인) · graph=상위 결과와 연결 · ref=직접 참조 · about=기준 객체 주변. degraded 가 있으면 의미 검색 없이 어휘 + 관계로만 찾은 결과다.",
+    "자연어 회상 검색: 이름·내용·접촉 이력·문서 본문·기억(어휘), 뜻이 비슷한 표현(의미 — 임베딩 공간이 활성일 때), 관계(그래프)를 함께 본다. 기억은 상태로 가중된다(확인됨 1.0 · 활성 0.85 · 제안 0.6 · 충돌 0.4, 외부 출처 ×0.7) — memory_status 를 보고 무게를 달리 둬라. 문서 결과에는 note_kind(note · playbook=따를 절차 · episode=지난 세션 요약 · brief · source=외부 자료)와 tainted(외부 출처·미검증) — 플레이북을 찾으려면 types [\"note\"] 로 절차를 검색하라. 무엇을 찾아야 할지 흐릿할 때(\"SSO 요구한 고객\", \"부가세 마감 절차\", \"클라우드 서버 비용\") 먼저 쓰고, 결과의 ref 로 get_object 를 호출하라. why: lexical=내용 일치 · semantic=의미 유사(similarity=코사인) · graph=상위 결과와 연결 · ref=직접 참조 · about=기준 객체 주변. degraded 가 있으면 의미 검색 없이 어휘 + 관계로만 찾은 결과다.",
     {
       query: z.string().min(1).describe("자연어 질의 또는 핵심어. 객체 참조(CLT-0003)도 가능"),
       about: z.string().optional().describe('이 객체 주변을 우선 — "client:3" 또는 "CLT-0003"'),
@@ -178,6 +183,7 @@ export const TOOLS: Tool[] = [
           why: h.why,
           ...(h.similarity !== undefined ? { similarity: h.similarity } : {}),
           ...(h.memory ? { memory_status: h.memory.status, tainted: h.memory.tainted } : {}),
+          ...(h.note ? { note_kind: h.note.kind, tainted: h.note.tainted } : {}),
           matched: h.matched,
           snippet: h.snippet,
           via: h.via ? `${h.via.from} —${h.via.label}` : undefined,
@@ -270,6 +276,35 @@ export const TOOLS: Tool[] = [
           created_by: m.created_by,
         };
       });
+    },
+  ),
+  def(
+    "list_episodes",
+    "최근 에피소드 — 끝난 AI 세션마다 워커가 결정적으로 만든 요약 문서(요청 · 결과 · 실행한 액션 · 참고/인용한 기억). 기억 정리(큐레이터): 에피소드를 읽고 반복해서 쓸 만한 사실·선호·교훈만 remember 로 제안하라 (근거 = 에피소드 ref \"note:N\" + 관련 객체). 전문은 get_object(type note). tainted=true 는 외부·다른 에이전트 입력으로 시작된 세션 — 거기서 나온 기억은 tainted 로 제안하라.",
+    {
+      since: z.string().optional().describe("이 시각(ISO) 이후 생긴 것만 — 비우면 최근 7일"),
+      limit: z.number().int().min(1).max(50).optional().describe("최대 개수 (기본 20, 새 것 먼저)"),
+      include_tainted: z.boolean().optional().describe("외부 출처(미검증) 에피소드 포함 (기본 true)"),
+    },
+    (db, _a, { since, limit, include_tainted }) => {
+      const s = since?.trim();
+      if (s && Number.isNaN(Date.parse(s))) throw new ToolError(`since 는 ISO 시각이어야 합니다: ${s}`);
+      const from = s ? new Date(s).toISOString() : new Date(Date.now() - 7 * 86_400_000).toISOString();
+      const rows = listEpisodes(db, { since: from, limit: limit ?? 20, includeTainted: include_tainted ?? true });
+      return {
+        since: from,
+        episodes: rows.map((n) => ({
+          id: n.id,
+          ref: `note:${n.id}`,
+          display_id: displayId("note", n.id),
+          title: n.title,
+          created_at: n.created_at,
+          session_id: episodeSessionId(n),
+          business_id: n.business_id,
+          tainted: !!n.tainted,
+          excerpt: n.body.length > 600 ? `${n.body.slice(0, 600)}…` : n.body,
+        })),
+      };
     },
   ),
   def(

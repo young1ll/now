@@ -23,16 +23,24 @@ export default async function ExplorerPage({ params, searchParams }: { params: P
   const scope = await currentScope();
   const q = one(sp.q)?.trim() || undefined;
   const status = one(sp.status) || undefined;
+  // 분류 탭 (문서 종류 등) — facet 이 있는 유형만
+  const facetParam = one(sp.facet) || undefined;
+  const facet = def.facet?.options.some((o) => o.value === facetParam) ? facetParam : undefined;
   const sel = Number(one(sp.sel)) || undefined;
   const sub = one(sp.sub) ? parseRef(one(sp.sub)!) : undefined;
-  const all = def.list(db(), scope, q);
+  // 분류 탭: 개수를 따로 세는 유형(문서)은 선택한 종류만 SQL 로 읽는다
+  const counts = def.facetCounts?.(db(), scope, q);
+  const listed = def.list(db(), scope, q, counts ? { facet } : undefined);
+  const all = facet && def.facet && !counts ? listed.filter((r) => r.props[def.facet!.key] === facet) : listed;
+  const facetCount = (v?: string) =>
+    counts ? (v ? (counts[v] ?? 0) : Object.values(counts).reduce((a, b) => a + b, 0)) : v ? listed.filter((r) => r.props[def.facet!.key] === v).length : listed.length;
   const statuses = [...new Map(all.filter((r) => r.status).map((r) => [r.status!.label, r.status!])).values()];
   const rows = status ? all.filter((r) => r.status?.label === status) : all;
   const path = `/o/${type}`;
   const create = def.createAction ? getAction(def.createAction) : undefined;
   const keep = (patch: Record<string, string | undefined>) => {
     const u = new URLSearchParams();
-    for (const [k, v] of Object.entries({ q, status, sel: sel ? String(sel) : undefined, sub: one(sp.sub), ...patch })) if (v) u.set(k, v);
+    for (const [k, v] of Object.entries({ q, facet, status, sel: sel ? String(sel) : undefined, sub: one(sp.sub), ...patch })) if (v) u.set(k, v);
     return u;
   };
   const href = (patch: Record<string, string | undefined>) => `${path}?${keep(patch)}`;
@@ -49,8 +57,11 @@ export default async function ExplorerPage({ params, searchParams }: { params: P
         actions={
           <>
             <Link href={`/graph?types=${def.type}`} className="btn"><Icon name="graph" size={12} /> 그래프</Link>
+            {def.type === "note" && (
+              <Link href={actHref(path, "document.import", {}, { business_id: scope ?? undefined, tainted: true })} className="btn"><Icon name="plus" size={12} /> 외부 자료 가져오기</Link>
+            )}
             {create && (
-              <Link href={actHref(path, create.name, {}, { business_id: def.type !== "business" && scope ? scope : undefined })} className="btn-primary">
+              <Link href={actHref(path, create.name, {}, { business_id: def.type !== "business" && scope ? scope : undefined, kind: def.type === "note" && facet && facet !== "episode" ? facet : undefined, tainted: def.type === "note" && facet === "source" ? true : undefined })} className="btn-primary">
                 <Icon name="plus" size={12} /> {create.title}
               </Link>
             )}
@@ -62,11 +73,26 @@ export default async function ExplorerPage({ params, searchParams }: { params: P
           title={<>{def.label} <span className="mono bg-raised px-1.5 text-fg-2">{rows.length}</span></>}
           actions={
             <form action={path} className="flex gap-1">
+              {facet && <input type="hidden" name="facet" value={facet} />}
               {status && <input type="hidden" name="status" value={status} />}
               <input name="q" defaultValue={q} placeholder="검색" className="field h-6 min-h-0 w-40 py-0 text-[12px]" />
             </form>
           }
         >
+          {def.facet && (
+            <div className="flex flex-wrap items-center gap-1 border-b border-line-soft px-3 py-1.5">
+              <span className="label-caps mr-1">{def.facet.label}</span>
+              <Link href={href({ facet: undefined, status: undefined, sel: undefined })} className={!facet ? "btn btn-sm" : "btn-minimal btn-sm"}>전체 <span className="mono">{facetCount()}</span></Link>
+              {def.facet.options.map((o) => {
+                const n = facetCount(o.value);
+                return (
+                  <Link key={o.value} href={href({ facet: o.value, status: undefined, sel: undefined })} className={facet === o.value ? "btn btn-sm" : "btn-minimal btn-sm"}>
+                    {o.label} <span className="mono">{n}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
           <div className="flex flex-wrap gap-1 border-b border-line-soft px-3 py-1.5">
             <Link href={href({ status: undefined })} className={!status ? "btn-primary btn-sm" : "btn btn-sm"}>전체 {all.length}</Link>
             {statuses.map((s) => (

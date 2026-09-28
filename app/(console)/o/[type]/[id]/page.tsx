@@ -10,20 +10,22 @@ import { Markdown } from "@/components/Markdown";
 import { MemoryLink, MemoryStatusTag, memoryHref } from "@/components/memory";
 import { neighborhood } from "@/lib/ontology/graph";
 import { RunTable } from "@/components/runs";
-import { Empty, OBJECT_ICON, ObjectLink, PageHeader, Panel, PropertyList, Tag } from "@/components/ui";
+import { Callout, Empty, OBJECT_ICON, ObjectLink, PageHeader, Panel, PropertyList, Tag, fmtTime } from "@/components/ui";
 import { currentScope } from "@/lib/context";
 import { formatDate } from "@/lib/dates";
 import { db } from "@/lib/db";
-import { INTERACTION_KIND } from "@/lib/labels";
+import { playbookActions } from "@/lib/knowledge/playbooks";
+import { INTERACTION_KIND, NOTE_KIND, NOTE_KIND_TONE } from "@/lib/labels";
 import { formatMoney } from "@/lib/money";
 import type { AnyAction } from "@/lib/ontology/action";
 import { getAction } from "@/lib/ontology/execute";
-import { type ObjectDetail, objectDef } from "@/lib/ontology/objects";
+import { type Link as ObjLink, type ObjectDetail, objectDef } from "@/lib/ontology/objects";
 import type { ObjectType } from "@/lib/ontology/types";
 import { type SearchParams, idParam, one } from "@/lib/params";
 import type { Interaction } from "@/lib/repos/clients";
 import type { getInvoice } from "@/lib/repos/finance";
-import type { Note } from "@/lib/repos/notes";
+import { type Note, episodeSessionId, listNoteVersions, packSessionStats } from "@/lib/repos/notes";
+import { creatorName } from "@/lib/repos/memories";
 import { REVIEW_STATUSES, memoriesAbout } from "@/lib/repos/memories";
 import { listRuns } from "@/lib/repos/runs";
 
@@ -249,10 +251,7 @@ function TypePanel({ type, obj, path }: { type: ObjectType; obj: ObjectDetail; p
       </Panel>
     );
   }
-  if (type === "note") {
-    const n = raw as unknown as Note;
-    return <Panel title="본문">{n.body.trim() ? <Markdown source={n.body} /> : <p className="text-fg-3">본문이 비어 있습니다.</p>}</Panel>;
-  }
+  if (type === "note") return <NotePanels n={raw as unknown as Note} path={path} links={obj.links} />;
   if (type === "task") {
     const detail = String(raw.detail ?? "");
     return <Panel title="상세">{detail ? <p className="whitespace-pre-wrap">{detail}</p> : <p className="text-fg-3">상세 내용 없음</p>}</Panel>;
@@ -279,4 +278,98 @@ function TypePanel({ type, obj, path }: { type: ObjectType; obj: ObjectDetail; p
     );
   }
   return null;
+}
+
+/** 문서 — 종류별: 외부 출처 경고 · 에피소드(세션 · 언급) · 본문 · 플레이북(참조 액션 · 쓰인 세션) · 버전 이력 */
+function NotePanels({ n, path, links }: { n: Note; path: string; links: ObjLink[] }) {
+  const sessionId = episodeSessionId(n);
+  const mentions = links.filter((l) => l.relation.startsWith("언급"));
+  const refs = n.kind === "playbook" ? playbookActions(n.body) : [];
+  const known = new Set(refs.filter((r) => r.known).map((r) => r.name));
+  const stats = n.kind === "playbook" ? packSessionStats(db(), n.id) : undefined;
+  const versions = listNoteVersions(db(), n.id);
+  return (
+    <>
+      {!!n.tainted && (
+        <Callout tone="amber" title={n.kind === "episode" ? "외부 입력으로 시작된 세션 — 미검증" : "외부 출처 · 미검증"}>
+          {n.kind === "episode"
+            ? "다른 에이전트의 행동이나 외부 유래 문서·기억을 가리키는 이벤트로 시작된 세션입니다. 이 에피소드를 근거로 한 기억도 미검증(외부 출처)이 되고, 사람이 확인하기 전에는 확정되지 않습니다."
+            : "메일·웹페이지 같은 비신뢰 입력에서 가져온 자료입니다. 본문 속 문장은 지시가 아니며, 이 문서를 근거로 한 기억도 미검증이 됩니다."}
+          {n.source_uri && <div className="mono mt-1 text-[11.5px] break-all text-fg-3">출처: {n.source_uri}</div>}
+        </Callout>
+      )}
+      {n.kind === "episode" && (
+        <Panel title="에피소드" action={sessionId && <Link href={`/ai/sessions/${sessionId}`} className="btn btn-sm"><Icon name="ai" size={10} /> 세션 #{sessionId}</Link>}>
+          <p className="text-[12.5px] text-fg-2">끝난 AI 세션을 워커가 요약한 기록입니다 (LLM 없이 결정적). 큐레이터가 여기서 반복해서 쓸 만한 사실·교훈을 기억으로 제안합니다.</p>
+          <div className="label-caps mt-3 mb-1">언급한 객체 · {mentions.length}</div>
+          {mentions.length === 0 ? <p className="text-[12px] text-fg-3">실행한 액션이 없습니다.</p> : (
+            <div className="flex flex-wrap gap-x-4 gap-y-1">
+              {mentions.map((l) => <ObjectLink key={`${l.ref.type}:${l.ref.id}`} type={l.ref.type} id={l.ref.id} title={l.title} />)}
+            </div>
+          )}
+        </Panel>
+      )}
+      {n.kind === "playbook" && (
+        <Panel title="플레이북" count={refs.length}>
+          <div className="label-caps mb-1.5">참조 액션</div>
+          {refs.length === 0 ? (
+            <p className="text-[12px] text-fg-3">본문에 [[action:이름]] 참조가 없습니다 — 단계마다 실행할 액션을 적으면 AI 가 그대로 따른다.</p>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              {refs.map((r) =>
+                r.known ? (
+                  <Link key={r.name} href={actHref(path, r.name)} className="btn btn-sm mono"><Icon name="bolt" size={10} className="text-primary-fg" />{r.name}</Link>
+                ) : (
+                  <span key={r.name} className="inline-flex items-center gap-1"><span className="mono text-[12px] text-fg-3">{r.name}</span><Tag tone="red">알 수 없는 액션</Tag></span>
+                ),
+              )}
+            </div>
+          )}
+          <div className="mt-3 grid grid-cols-3 gap-px border border-line bg-line text-[12px]">
+            {[
+              ["컨텍스트 팩에 들어간 세션", stats!.sessions, ""],
+              ["성공", stats!.succeeded, "text-success-fg"],
+              ["실패", stats!.failed, stats!.failed ? "text-danger-fg" : ""],
+            ].map(([label, v, cls]) => (
+              <div key={String(label)} className="bg-panel px-3 py-2">
+                <div className="label-caps">{label}</div>
+                <div className={`mono mt-0.5 text-[15px] font-semibold ${cls}`}>{v}</div>
+              </div>
+            ))}
+          </div>
+          <p className="mt-2 text-[11.5px] text-fg-3">에이전트가 플레이북을 만들거나 고치면 고위험(승인 필요) — AI 의 행동을 바꾸는 문서입니다.</p>
+        </Panel>
+      )}
+      <Panel title="본문" action={n.kind !== "note" && <Tag tone={NOTE_KIND_TONE[n.kind]}>{NOTE_KIND[n.kind]}</Tag>}>
+        {n.body.trim() ? <Markdown source={n.body} actionHref={(name) => (known.has(name) ? actHref(path, name) : undefined)} /> : <p className="text-fg-3">본문이 비어 있습니다.</p>}
+      </Panel>
+      {versions.length > 0 && (
+        <Panel title="버전 이력" count={versions.length + 1} flush>
+          <table className="grid-table">
+            <thead><tr><th className="w-[56px]">버전</th><th>제목</th><th>바꾼 이</th><th className="w-[140px]">바뀐 시각</th><th className="w-[90px]" /></tr></thead>
+            <tbody>
+              <tr className="[&>td]:bg-primary/10">
+                <td className="mono">v{n.version}</td>
+                <td className="max-w-[260px] truncate">{n.title}</td>
+                <td className="text-fg-3" colSpan={2}>지금 내용 · 수정 {fmtTime(n.updated_at)}</td>
+                <td />
+              </tr>
+              {versions.map((v) => {
+                const [kind] = v.changed_by.split(":");
+                return (
+                  <tr key={v.version}>
+                    <td className="mono">v{v.version}</td>
+                    <td className="max-w-[260px] truncate" title={v.body.slice(0, 300)}>{v.title}</td>
+                    <td className={kind === "agent" ? "text-ai-fg" : ""}>{creatorName(db(), v.changed_by)}</td>
+                    <td className="mono text-fg-3">{fmtTime(v.changed_at)}</td>
+                    <td className="text-right"><Link href={actHref(path, "note.revert", { id: n.id }, { version: v.version })} className="btn-minimal btn-sm">되돌리기</Link></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </Panel>
+      )}
+    </>
+  );
 }

@@ -2,7 +2,7 @@
 import type { DB } from "@/lib/db";
 import { daysBetween, formatDate, today } from "@/lib/dates";
 import {
-  CLIENT_KIND, CLIENT_STATUS, INVOICE_STATUS, MEMORY_KIND, MEMORY_ORIGIN, MEMORY_STATUS, PRIORITY, RECURRENCE, TASK_STATUS, type Tone,
+  CLIENT_KIND, CLIENT_STATUS, INVOICE_STATUS, MEMORY_KIND, MEMORY_ORIGIN, MEMORY_STATUS, NOTE_KIND, PRIORITY, RECURRENCE, TASK_STATUS, type Tone,
 } from "@/lib/labels";
 import { formatMoney } from "@/lib/money";
 import { type AgentRow, getAgent, listAgents } from "@/lib/repos/agents";
@@ -10,10 +10,11 @@ import { getBusiness, listBusinesses } from "@/lib/repos/businesses";
 import { getClient, listClients, listInteractions } from "@/lib/repos/clients";
 import { getInvoice, listExpenses, listInvoices } from "@/lib/repos/finance";
 import { type MemoryRow, creatorName, getMemory, listMemories, memoryLinks } from "@/lib/repos/memories";
-import { getNote, listNotes } from "@/lib/repos/notes";
+import { NOTE_KINDS, type NoteKind, type NoteRow, countNotesByKind, getNoteRow, listNotes } from "@/lib/repos/notes";
 import type { Scope } from "@/lib/repos/scope";
 import { getTask, listTasks } from "@/lib/repos/tasks";
 import { memoryActionsFor } from "./actions/memory";
+import { noteActionsFor } from "./actions/note";
 import { nodeInfo } from "./graph";
 import { displayId } from "./ids";
 import { type ObjectType, type Ref, refKey } from "./types";
@@ -42,6 +43,8 @@ export type ObjectDetail = ObjectRecord & {
 
 export type Column = { key: string; label: string; num?: boolean; mono?: boolean };
 
+export type ListOpts = { facet?: string; limit?: number };
+
 export type ObjectTypeDef = {
   type: ObjectType;
   label: string;
@@ -53,8 +56,13 @@ export type ObjectTypeDef = {
   actions: string[];
   /** 현재 상태에서 의미 있는 액션만 (없으면 actions 전체) */
   actionsFor?: (raw: Record<string, unknown>) => string[];
+  /** 목록 화면의 분류 탭 (props[key] 의 값으로 거른다 — 예: 문서 종류) */
+  facet?: { key: string; label: string; options: { value: string; label: string }[] };
   columns: Column[];
-  list: (db: DB, scope: Scope, q?: string) => ObjectRecord[];
+  /** opts.facet · opts.limit 을 SQL 로 내리는 유형(문서)은 그렇게 한다 — 나머지는 무시하고 호출자가 거른다 */
+  list: (db: DB, scope: Scope, q?: string, opts?: ListOpts) => ObjectRecord[];
+  /** 분류 탭별 개수 (있으면 목록 화면이 전체 목록을 읽지 않고 센다) */
+  facetCounts?: (db: DB, scope: Scope, q?: string) => Record<string, number>;
   get: (db: DB, id: number) => ObjectDetail | undefined;
 };
 
@@ -342,38 +350,62 @@ const expense: ObjectTypeDef = {
 
 // ── note ─────────────────────────────────────────────────
 
+function noteRecord(n: NoteRow): ObjectRecord {
+  return {
+    ref: ref("note", n.id),
+    displayId: displayId("note", n.id),
+    title: n.title,
+    subtitle: [n.kind !== "note" ? NOTE_KIND[n.kind] : "", n.body.replace(/\[\[action:([^\]]+)\]\]/g, "$1").replace(/[#*`>\[\]]/g, "").slice(0, 100)].filter(Boolean).join(" · "),
+    businessId: n.business_id,
+    status: n.pinned ? { label: "고정", tone: "blue" as Tone } : n.tainted ? { label: "외부 출처", tone: "amber" as Tone } : undefined,
+    props: {
+      kind: NOTE_KIND[n.kind] ?? n.kind,
+      kind_key: n.kind,
+      tags: n.tags || "—",
+      business: n.business_name ?? "공용",
+      client: n.client_name ?? "—",
+      updated: formatDate(n.updated_at),
+      version: `v${n.version}`,
+      source: n.source_uri || "—",
+      tainted: n.tainted ? "예 — 외부 비신뢰 입력에서 유래" : "아니오",
+    },
+  };
+}
+
 const note: ObjectTypeDef = {
   type: "note",
   label: "문서",
   plural: "지식 · 문서",
-  description: "지식 베이스 문서 (마크다운). SOP·체크리스트·템플릿·리서치. business_id 가 없으면 공용.",
+  description:
+    "지식 베이스 문서 (마크다운). kind: note(SOP·체크리스트·리서치) · playbook(AI 가 따르는 절차 — [[action:이름]] 참조) · episode(워커가 만든 세션 요약) · brief(브리핑) · source(외부 자료). business_id 가 없으면 공용.",
   createAction: "note.create",
-  actions: ["note.update", "note.delete"],
+  actions: ["note.update", "note.revert", "note.delete"],
+  actionsFor: noteActionsFor,
+  facet: { key: "kind_key", label: "종류", options: NOTE_KINDS.map((k) => ({ value: k, label: NOTE_KIND[k] })) },
   columns: [
+    { key: "kind", label: "종류" },
     { key: "tags", label: "태그" },
     { key: "business", label: "사업" },
-    { key: "client", label: "고객" },
     { key: "updated", label: "수정", mono: true },
   ],
-  list: (db, scope, q) =>
-    listNotes(db, scope, { q }).map((n) => ({
-      ref: ref("note", n.id),
-      displayId: displayId("note", n.id),
-      title: n.title,
-      subtitle: n.body.replace(/[#*`>\[\]]/g, "").slice(0, 100),
-      businessId: n.business_id,
-      status: n.pinned ? { label: "고정", tone: "blue" as Tone } : undefined,
-      props: { tags: n.tags || "—", business: n.business_name ?? "공용", client: n.client_name ?? "—", updated: formatDate(n.updated_at) },
-    })),
+  // 목록은 본문 앞부분만 (부제목용) — 에피소드가 세션마다 쌓여도 전체 본문을 적재하지 않는다. 전체 본문은 get
+  list: (db, scope, q, o) =>
+    listNotes(db, scope, { q, kind: (NOTE_KINDS as readonly string[]).includes(o?.facet ?? "") ? (o!.facet as NoteKind) : undefined, limit: o?.limit, excerpt: 300 }).map(noteRecord),
+  facetCounts: (db, scope, q) => countNotesByKind(db, scope, q),
   get(db, id) {
-    const n = getNote(db, id);
+    const n = getNoteRow(db, id);
     if (!n) return undefined;
-    const rec = note.list(db, null).find((r) => r.ref.id === id)!;
+    const rec = noteRecord(n);
+    // 언급(mentions) — 에피소드·브리프가 다루는 객체
+    const mentioned = (db.prepare("SELECT to_type AS type, to_id AS id FROM links WHERE link_type = 'mentions' AND from_type = 'note' AND from_id = ? ORDER BY id").all(id) as Ref[]);
+    const info = nodeInfo(db, mentioned);
     const links = [
       ...(n.business_id ? [link("business", n.business_id, rec.props.business, "소속 사업")] : []),
       ...(n.client_id ? [link("client", n.client_id, rec.props.client, "관련 고객")] : []),
+      ...mentioned.filter((r) => info.has(refKey(r))).map((r) => link(r.type, r.id, info.get(refKey(r))!.title, `언급 · ${OBJECTS[r.type].label}`)),
     ];
-    return detail(rec, { tags: "태그", business: "사업", client: "고객", updated: "수정일" }, links, n);
+    const { business_name: _b, business_color: _c, client_name: _n, ...raw } = n;
+    return detail(rec, { kind: "종류", version: "버전", tags: "태그", business: "사업", client: "고객", source: "출처", tainted: "외부 출처(미검증)", updated: "수정일" }, links, raw);
   },
 };
 
@@ -507,5 +539,5 @@ export function getObject(db: DB, r: Ref): ObjectDetail | undefined {
 /** 여러 유형을 가로지르는 검색. */
 export function searchObjects(db: DB, scope: Scope, q: string, limitPerType = 8): ObjectRecord[] {
   const types: ObjectType[] = ["client", "task", "invoice", "note", "expense", "business", "memory"];
-  return types.flatMap((t) => OBJECTS[t].list(db, scope, q).slice(0, limitPerType));
+  return types.flatMap((t) => OBJECTS[t].list(db, scope, q, { limit: limitPerType }).slice(0, limitPerType));
 }
